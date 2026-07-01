@@ -9,17 +9,18 @@ only module that imports WhisperKit, so swapping/adding ASR backends never
 touches capture, hotkeys, or injection.
 
 ```
-                 ┌─────────────────────────────────────────┐
-                 │            FabulousApp (exe)            │
-                 │  AppController · StatusItem · Onboarding │
-                 └──┬────────┬───────────┬────────────┬────┘
-                    │        │           │            │
-             HotkeyEngine AudioCapture TranscriptionEngine TextInjector
-                    │        │           │            │
-                    └────────┴─────┬─────┴────────────┘
-                                 FabCore
-                (AudioBuffer · Transcript · ModelDescriptor ·
-                 TextPostProcessor · ReplacementDictionary)
+              ┌─────────────────────────────────────────────────┐
+              │                 FabulousApp (exe)               │
+              │ AppController · StatusItem · Settings · Overlay │
+              │        Onboarding · SettingsStore · Permissions │
+              └─┬────────┬────────────┬─────────────┬─────────┬─┘
+                │        │            │             │         │
+         HotkeyEngine AudioCapture TranscriptionEngine TextInjector HistoryStore
+                │        │            │             │         │
+                └────────┴──────┬─────┴─────────────┴─────────┘
+                             FabCore
+              (AudioBuffer · Transcript · ModelDescriptor/Catalog ·
+               TextPostProcessor · ReplacementDictionary)
 ```
 
 ### Dictation data flow
@@ -44,16 +45,25 @@ with a self-clearing `failed` state so errors never wedge the hotkey.
 ## Module notes
 
 ### HotkeyEngine
-Primary: a **CGEventTap** for `flagsChanged`, created as an *active* tap
-(`.defaultTap`, passing events through unmodified). Active taps work with the
-Accessibility permission we already require for injection; a listen-only tap
-would additionally require Input Monitoring. Modifier-only chords (Right ⌥,
-Fn/Globe) are distinguished by hardware key code, since flag masks don't
-carry left/right. The tap re-arms itself on `tapDisabledByTimeout`. Fallback
-when the tap can't be created: `NSEvent.addGlobalMonitorForEvents`, which
-delivers `flagsChanged` without extra permissions. Push-to-talk and toggle
-modes are interpreted by `AppController`; the monitor only reports raw
-press/release transitions.
+Primary: a **CGEventTap** created as an *active* tap (`.defaultTap`). Active
+taps work with the Accessibility permission we already require for injection;
+a listen-only tap would additionally require Input Monitoring. Two trigger
+kinds (`HotkeyTrigger`):
+
+- **Modifier-hold** (Right ⌥, Fn/Globe, …) — matched on `flagsChanged` by
+  hardware key code, since flag masks don't carry left/right. Always passed
+  through to the system.
+- **Key chord** (⌥Space, ⇧⌘F5, …) — matched on `keyDown`/`keyUp` with a
+  side-insensitive modifier set (`ChordModifiers`). Matched events (and
+  their autorepeats) are *swallowed* by returning nil from the tap callback,
+  so the chord doesn't also type into the focused app.
+
+The tap re-arms itself on `tapDisabledByTimeout`. Fallback when the tap
+can't be created: `NSEvent.addGlobalMonitorForEvents` (no swallowing there).
+Push-to-talk and toggle modes are interpreted by `AppController`; the monitor
+only reports raw press/release transitions. The settings window records new
+hotkeys with a local event monitor (`KeyCaptureSession`) while the global
+monitor is suspended.
 
 ### AudioCapture
 `AudioRecorder` is an actor owning an `AVAudioEngine`. The render tap
@@ -77,12 +87,24 @@ protocol TranscriptionBackend: Sendable {
 }
 ```
 
-Backends: **WhisperKit** (shipped, default `base` for the slice;
-`large-v3-turbo` becomes the recommended default with model management),
-**Parakeet via FluidAudio** (planned; best for 8 GB M1), **Apple
-SpeechAnalyzer** (planned, macOS 26+ behind availability check). Models
-download on demand to `~/Library/Application Support/fabulous/models/`;
-never bundled.
+Backends: **WhisperKit** (shipped; `large-v3-turbo` recommended default,
+`small`/`base` for smaller footprints), **Parakeet via FluidAudio**
+(planned; best for 8 GB M1), **Apple SpeechAnalyzer** (planned, macOS 26+
+behind availability check).
+
+**Model management** is split from loading: `ModelManager` (actor) owns the
+on-disk lifecycle — download with progress, delete, size accounting —
+against the hub snapshot layout codified in `ModelLayout`
+(`<base>/models/argmaxinc/whisperkit-coreml/<variant>/`). A model counts as
+installed only when all required CoreML components exist, so interrupted
+downloads read as not-installed and re-running a download resumes/repairs it
+(the hub client skips files that already match the remote manifest — this
+doubles as integrity verification). `WhisperKitBackend.load` prefers the
+installed folder (pure local load, works offline) and only reaches for the
+network when the model isn't on disk. Downloads land in
+`~/Library/Application Support/fabulous/models/`; never bundled. Offline is
+detected both reactively (URLError classification → a typed `.offline`
+error) and proactively (`NWPathMonitor` banner in the Models tab).
 
 ### TextInjector — the strategy chain
 
@@ -111,11 +133,29 @@ lower (terminals default to paste — AX insertion into terminal emulators is
 unreliable); the chain never promotes back upward.
 
 ### UI layer
-Status item + menu (AppKit), onboarding window (SwiftUI in an
+Status item + menu (AppKit); onboarding window (SwiftUI in an
 `NSHostingController`) with 1 Hz permission polling — Accessibility has no
-change notification API. Planned: non-activating `NSPanel` recording overlay
-(all Spaces, ignores mouse, never steals focus), SwiftUI settings window,
-GRDB-backed optional history.
+change notification API.
+
+**Settings window** (SwiftUI, three tabs): General (hotkey recorder, PTT vs
+toggle, microphone picker by Core Audio UID, launch-at-login via
+`SMAppService`), Models (catalog with download progress / use / delete,
+offline banner), History (toggle, recent list, clear). Views are
+presentation-only: state flows in via `@Observable` models
+(`SettingsStore`, `ModelListModel`, `ConnectivityMonitor`), effects flow out
+through a `SettingsActions` closure bundle into `AppController`.
+
+**Recording overlay**: a borderless, *non-activating* `NSPanel`
+(bottom-center of the screen the mouse is on) that joins all Spaces, ignores
+the mouse, and never becomes key — the target app must keep focus or
+injection would break. Shows a smoothed input-level meter while recording
+(50 ms polls of `AudioRecorder.currentLevel`) and a spinner while
+transcribing.
+
+**History**: GRDB/SQLite at `~/Library/Application Support/fabulous/
+history.sqlite`, capped at 500 entries (pruned on insert). Text only — audio
+is never persisted. The toggle simply stops `record` calls; Clear History
+deletes all rows.
 
 ### Post-processing (v1.5 interface, shipped now)
 `TextPostProcessor` — `process(String) async throws -> String`. Shipped:
@@ -130,8 +170,10 @@ upstream changes.
 |---|---|
 | `AudioRecorder` | actor; engine confined, tap thread touches only `TapProcessor` |
 | `TapProcessor` | `@unchecked Sendable`, lock-guarded accumulator; documented invariant |
-| `WhisperKitBackend` | actor; non-Sendable `WhisperKit` confined (retroactive `@unchecked Sendable` to satisfy region checks) |
+| `WhisperKitBackend`, `ModelManager` | actors; non-Sendable `WhisperKit` confined (retroactive `@unchecked Sendable` to satisfy region checks) |
+| `HistoryStore` | `Sendable` class over GRDB's `DatabaseQueue` (which serializes) |
 | `HotkeyMonitor`, `TextInjector`, UI | `@MainActor` |
+| `SettingsStore`, `ModelListModel`, `OverlayModel`, `ConnectivityMonitor` | `@MainActor @Observable` |
 | `FabCore` types | `Sendable` value types |
 
 CGEventTap callback: Sendable fields are extracted from the CGEvent before

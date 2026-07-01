@@ -17,18 +17,37 @@ public struct ModelDescriptor: Sendable, Equatable, Codable {
         self.approximateSizeMB = approximateSizeMB
     }
 
-    /// The vertical-slice default: small, quick to download, good enough
-    /// to prove the pipeline.
+    /// Small and quick to download; the fallback for low-RAM machines.
     public static let whisperBase = ModelDescriptor(
         id: "base",
         displayName: "Whisper Base",
         approximateSizeMB: 150
     )
 
-    /// Recommended default for machines with RAM to spare (later phase).
+    /// Middle ground: noticeably better accuracy than base, still light.
+    public static let whisperSmall = ModelDescriptor(
+        id: "small",
+        displayName: "Whisper Small",
+        approximateSizeMB: 480
+    )
+
+    /// Recommended default on machines with RAM to spare.
     public static let whisperLargeV3Turbo = ModelDescriptor(
         id: "large-v3_turbo",
         displayName: "Whisper Large v3 Turbo",
         approximateSizeMB: 1600
     )
+}
+
+/// The models fabulous offers in the UI, best first.
+public enum ModelCatalog {
+    public static let all: [ModelDescriptor] = [
+        .whisperLargeV3Turbo, .whisperSmall, .whisperBase,
+    ]
+
+    public static let recommended: ModelDescriptor = .whisperLargeV3Turbo
+
+    public static func descriptor(withID id: String) -> ModelDescriptor? {
+        all.first { $0.id == id }
+    }
 }

@@ -13,8 +13,11 @@ off-device. No cloud, no telemetry, no accounts.
 
 ## Status
 
-Early. The vertical slice works: menu bar icon → hold **Right ⌥** → record →
-Whisper `base` → text lands in the frontmost app. See
+Early but usable: hold **Right ⌥** (configurable) → record → Whisper on
+CoreML → text lands in the frontmost app. Includes a settings window
+(hotkey recorder, microphone picker, launch-at-login), model management
+(large-v3-turbo / small / base with download progress), a floating recording
+overlay, and optional local transcript history. See
 [docs/architecture.md](docs/architecture.md) for where this is going.
 
 ## Build
@@ -46,15 +49,27 @@ With ad-hoc dev signing, macOS invalidates these grants on every rebuild —
 re-toggle fabulous in System Settings → Privacy & Security → Accessibility,
 or build with `CODESIGN_IDENTITY`.
 
-The Whisper `base` model (~150 MB) downloads on first launch into
-`~/Library/Application Support/fabulous/models/`. Models are never bundled
-with the app.
+On first launch fabulous downloads the recommended model
+(Whisper large-v3-turbo, ~1.6 GB — grab a coffee; the menu bar shows
+progress) into `~/Library/Application Support/fabulous/models/`. Prefer a
+smaller download? Open Settings → Models and install `base` (~150 MB) or
+`small` instead. Models are never bundled with the app.
 
 ## Usage
 
-Hold **Right ⌥ (Option)**, speak, release. The transcript is inserted into the
-focused text field. If a password field has focus, fabulous refuses to type.
-The menu bar icon shows state: ready / recording / transcribing.
+Hold **Right ⌥ (Option)**, speak, release. The transcript is inserted into
+the focused text field, and a small pill at the bottom of the screen shows
+recording level and transcription progress. If a password field has focus,
+fabulous refuses to type.
+
+Everything is configurable in Settings (menu bar icon → Settings…):
+
+- **Hotkey** — record any modifier-hold (e.g. Fn) or key chord (e.g. ⌥Space),
+  in hold-to-talk or tap-to-toggle mode.
+- **Microphone** — pick a specific input or follow the system default.
+- **Models** — download, switch, or delete models.
+- **History** — the last 500 transcripts, stored only on this Mac (SQLite),
+  with a toggle to disable and a Clear History button. Audio is never stored.
 
 ## Privacy
 

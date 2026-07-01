@@ -11,9 +11,11 @@ let package = Package(
     ],
     dependencies: [
         // WhisperKit: Whisper models compiled to CoreML, running on ANE/GPU.
-        // The only third-party dependency of the vertical slice; pulls in
-        // swift-transformers (Hugging Face model downloads + tokenizers).
-        .package(url: "https://github.com/argmaxinc/WhisperKit.git", from: "1.0.0")
+        // Vendors its own Hugging Face hub client and tokenizers.
+        .package(url: "https://github.com/argmaxinc/WhisperKit.git", from: "1.0.0"),
+        // GRDB: SQLite for the local transcript history. Chosen over raw
+        // sqlite3 for migrations + record types; no server, no ORM magic.
+        .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.11.1"),
     ],
     targets: [
         // Shared value types (AudioBuffer, Transcript, ModelDescriptor, …)
@@ -38,6 +40,15 @@ let package = Package(
         // Strategy chain for inserting text into the frontmost app.
         .target(name: "TextInjector", dependencies: ["FabCore"]),
 
+        // Local transcript history (SQLite via GRDB), fully optional at runtime.
+        .target(
+            name: "HistoryStore",
+            dependencies: [
+                "FabCore",
+                .product(name: "GRDB", package: "GRDB.swift"),
+            ]
+        ),
+
         // The menu bar app that wires everything together.
         .executableTarget(
             name: "FabulousApp",
@@ -47,11 +58,15 @@ let package = Package(
                 "HotkeyEngine",
                 "TranscriptionEngine",
                 "TextInjector",
+                "HistoryStore",
             ]
         ),
 
         .testTarget(name: "FabCoreTests", dependencies: ["FabCore"]),
         .testTarget(name: "AudioCaptureTests", dependencies: ["AudioCapture"]),
         .testTarget(name: "TextInjectorTests", dependencies: ["TextInjector"]),
+        .testTarget(name: "HotkeyEngineTests", dependencies: ["HotkeyEngine"]),
+        .testTarget(name: "HistoryStoreTests", dependencies: ["HistoryStore"]),
+        .testTarget(name: "TranscriptionEngineTests", dependencies: ["TranscriptionEngine"]),
     ]
 )

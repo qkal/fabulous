@@ -1,0 +1,291 @@
+import AudioCapture
+import FabCore
+import HistoryStore
+import HotkeyEngine
+import SwiftUI
+
+/// Closures into AppController — the views stay free of engine wiring.
+struct SettingsActions {
+    var setHotkeyCapturing: (Bool) -> Void
+    var downloadModel: (ModelDescriptor) -> Void
+    var deleteModel: (ModelDescriptor) -> Void
+    var useModel: (ModelDescriptor) -> Void
+    var recentTranscripts: () -> [TranscriptEntry]
+    var clearHistory: () -> Void
+}
+
+struct SettingsRootView: View {
+    @Bindable var store: SettingsStore
+    let models: ModelListModel
+    let connectivity: ConnectivityMonitor
+    let actions: SettingsActions
+
+    var body: some View {
+        TabView {
+            GeneralSettingsTab(store: store, actions: actions)
+                .tabItem { Label("General", systemImage: "gearshape") }
+            ModelsSettingsTab(
+                store: store, models: models,
+                connectivity: connectivity, actions: actions
+            )
+            .tabItem { Label("Models", systemImage: "brain") }
+            HistorySettingsTab(store: store, actions: actions)
+                .tabItem { Label("History", systemImage: "clock.arrow.circlepath") }
+        }
+        .frame(width: 540)
+    }
+}
+
+// MARK: - General
+
+private struct GeneralSettingsTab: View {
+    @Bindable var store: SettingsStore
+    let actions: SettingsActions
+
+    @State private var capturing = false
+    @State private var captureSession = KeyCaptureSession()
+    @State private var devices: [CaptureDevice] = []
+    @State private var launchAtLogin = false
+    @State private var launchAtLoginError: String?
+
+    var body: some View {
+        Form {
+            Section("Dictation hotkey") {
+                LabeledContent("Shortcut") {
+                    HStack {
+                        Text(capturing ? "Press hotkey… (⎋ to cancel)" : store.hotkeySpec.displayName)
+                            .font(.body.monospaced())
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .strokeBorder(capturing ? Color.accentColor : Color.secondary.opacity(0.4))
+                            )
+                        Button(capturing ? "Cancel" : "Change…") {
+                            capturing ? cancelCapture() : beginCapture()
+                        }
+                    }
+                }
+                Picker("Mode", selection: $store.hotkeySpec.mode) {
+                    ForEach(HotkeySpec.Mode.allCases, id: \.self) { mode in
+                        Text(mode.displayName).tag(mode)
+                    }
+                }
+                .pickerStyle(.radioGroup)
+            }
+
+            Section("Audio") {
+                Picker("Microphone", selection: $store.inputDeviceUID) {
+                    Text("System Default").tag(String?.none)
+                    ForEach(devices) { device in
+                        Text(device.name).tag(String?.some(device.id))
+                    }
+                }
+            }
+
+            Section {
+                Toggle("Launch fabulous at login", isOn: $launchAtLogin)
+                    .onChange(of: launchAtLogin) { _, newValue in
+                        guard newValue != LaunchAtLogin.isEnabled else { return }
+                        do {
+                            try LaunchAtLogin.set(newValue)
+                            launchAtLoginError = nil
+                        } catch {
+                            launchAtLogin = LaunchAtLogin.isEnabled
+                            launchAtLoginError = error.localizedDescription
+                        }
+                    }
+                if let launchAtLoginError {
+                    Text(launchAtLoginError)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear {
+            devices = AudioDevices.inputDevices()
+            launchAtLogin = LaunchAtLogin.isEnabled
+        }
+        .onDisappear { cancelCapture() }
+    }
+
+    private func beginCapture() {
+        capturing = true
+        actions.setHotkeyCapturing(true)
+        captureSession.begin { trigger in
+            capturing = false
+            actions.setHotkeyCapturing(false)
+            if let trigger {
+                store.hotkeySpec.trigger = trigger
+            }
+        }
+    }
+
+    private func cancelCapture() {
+        guard capturing else { return }
+        captureSession.end()
+        capturing = false
+        actions.setHotkeyCapturing(false)
+    }
+}
+
+// MARK: - Models
+
+private struct ModelsSettingsTab: View {
+    @Bindable var store: SettingsStore
+    let models: ModelListModel
+    let connectivity: ConnectivityMonitor
+    let actions: SettingsActions
+
+    var body: some View {
+        Form {
+            if !connectivity.isOnline {
+                Section {
+                    Label(
+                        "You're offline. Installed models keep working; downloads will resume when you're back online.",
+                        systemImage: "wifi.slash"
+                    )
+                    .foregroundStyle(.orange)
+                }
+            }
+            Section("Models") {
+                ForEach(models.items) { item in
+                    ModelRow(
+                        item: item,
+                        isRecommended: item.descriptor == ModelCatalog.recommended,
+                        isOnline: connectivity.isOnline,
+                        actions: actions
+                    )
+                }
+            }
+            Section {
+                Text("Models run entirely on this Mac. Downloads come from Hugging Face (argmaxinc/whisperkit-coreml) into ~/Library/Application Support/fabulous/models/.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+private struct ModelRow: View {
+    let item: ModelListModel.Item
+    let isRecommended: Bool
+    let isOnline: Bool
+    let actions: SettingsActions
+
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(item.descriptor.displayName).font(.headline)
+                    if isRecommended {
+                        Text("Recommended")
+                            .font(.caption2.bold())
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1)
+                            .background(Capsule().fill(Color.accentColor.opacity(0.2)))
+                    }
+                }
+                Text(sizeText).font(.caption).foregroundStyle(.secondary)
+                if case let .failed(message) = item.status {
+                    Text(message).font(.caption).foregroundStyle(.red)
+                }
+            }
+            Spacer()
+            statusControls
+        }
+        .padding(.vertical, 2)
+    }
+
+    private var sizeText: String {
+        if let size = item.sizeOnDiskMB {
+            "\(size) MB on disk"
+        } else {
+            "~\(item.descriptor.approximateSizeMB) MB download"
+        }
+    }
+
+    @ViewBuilder
+    private var statusControls: some View {
+        switch item.status {
+        case .notInstalled, .failed:
+            Button("Download") { actions.downloadModel(item.descriptor) }
+                .disabled(!isOnline)
+        case let .downloading(progress):
+            HStack(spacing: 8) {
+                ProgressView(value: progress).frame(width: 100)
+                Text(progress.formatted(.percent.precision(.fractionLength(0))))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+        case .installed:
+            HStack(spacing: 8) {
+                Button("Use") { actions.useModel(item.descriptor) }
+                Button(role: .destructive) {
+                    actions.deleteModel(item.descriptor)
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .help("Delete this model from disk")
+            }
+        case .active:
+            Label("Active", systemImage: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+        }
+    }
+}
+
+// MARK: - History
+
+private struct HistorySettingsTab: View {
+    @Bindable var store: SettingsStore
+    let actions: SettingsActions
+
+    @State private var entries: [TranscriptEntry] = []
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Keep transcript history", isOn: $store.historyEnabled)
+                Text("The last \(store.historyCap) transcripts are stored in a local database on this Mac — nothing syncs anywhere. Audio is never stored.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Recent transcripts") {
+                if entries.isEmpty {
+                    Text("Nothing yet. Dictate something!")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(entries) { entry in
+                        HStack(alignment: .top) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(entry.text).lineLimit(2)
+                                Text(entry.createdAt.formatted(date: .abbreviated, time: .shortened))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(entry.text, forType: .string)
+                            } label: {
+                                Image(systemName: "doc.on.doc")
+                            }
+                            .buttonStyle(.borderless)
+                            .help("Copy")
+                        }
+                    }
+                    Button("Clear History", role: .destructive) {
+                        actions.clearHistory()
+                        entries = []
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear { entries = actions.recentTranscripts() }
+    }
+}

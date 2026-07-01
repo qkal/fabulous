@@ -27,9 +27,15 @@ public actor WhisperKitBackend: TranscriptionBackend {
         loadedModel = nil
 
         try FabPaths.ensureDirectoryExists(modelsDirectory)
+        // Prefer the already-installed folder: loading is then purely local
+        // (works offline, no hub round-trip). Fall back to letting WhisperKit
+        // download when the model isn't on disk yet.
+        let installed = ModelLayout.installedFolder(for: model, downloadBase: modelsDirectory)
+            .flatMap { ModelLayout.isComplete($0) ? $0 : nil }
         let config = WhisperKitConfig(
             model: model.id,
             downloadBase: modelsDirectory,
+            modelFolder: installed?.path,
             verbose: false,
             logLevel: .error,
             prewarm: true,
@@ -39,6 +45,8 @@ public actor WhisperKitBackend: TranscriptionBackend {
         whisperKit = try await WhisperKit(config)
         loadedModel = model
     }
+
+    public var currentModel: ModelDescriptor? { loadedModel }
 
     public func transcribe(_ audio: AudioBuffer, language: Language?) async throws -> Transcript {
         guard let whisperKit else { throw TranscriptionError.modelNotLoaded }

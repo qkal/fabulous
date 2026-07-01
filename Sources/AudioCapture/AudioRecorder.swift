@@ -27,10 +27,12 @@ public actor AudioRecorder {
         self.vad = vad
     }
 
-    /// Starts capturing from the current default input device.
-    public func start() throws {
+    /// Starts capturing. `deviceUID` selects a specific input device; nil
+    /// (or a device that's no longer connected) uses the system default.
+    public func start(deviceUID: String? = nil) throws {
         guard !isRecording else { throw RecorderError.alreadyRecording }
 
+        applyInputDevice(uid: deviceUID)
         let processor = TapProcessor(targetSampleRate: Self.targetSampleRate)
         tapProcessor = processor
         do {
@@ -78,6 +80,27 @@ public actor AudioRecorder {
     /// Input level of the most recent buffer (0…1-ish RMS), for a level meter.
     public var currentLevel: Float {
         tapProcessor?.level ?? 0
+    }
+
+    /// Points the input node's underlying AudioUnit at the requested device.
+    /// Must run before the tap is installed / the engine starts. Failure
+    /// (device unplugged since it was picked) silently keeps the default.
+    private func applyInputDevice(uid: String?) {
+        guard let uid,
+              var deviceID = AudioDevices.deviceID(forUID: uid),
+              let audioUnit = engine.inputNode.audioUnit
+        else { return }
+        let status = AudioUnitSetProperty(
+            audioUnit,
+            kAudioOutputUnitProperty_CurrentDevice,
+            kAudioUnitScope_Global,
+            0,
+            &deviceID,
+            UInt32(MemoryLayout<AudioDeviceID>.size)
+        )
+        if status != noErr {
+            NSLog("fabulous: falling back to default input (device select err \(status))")
+        }
     }
 
     private func installTapAndStart(processor: TapProcessor) throws {

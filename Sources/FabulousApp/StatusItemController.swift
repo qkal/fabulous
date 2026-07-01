@@ -12,19 +12,27 @@ final class StatusItemController {
         action: #selector(copyLastTranscript),
         keyEquivalent: ""
     )
+    private let settingsItem = NSMenuItem(
+        title: "Settings…",
+        action: #selector(openSettings),
+        keyEquivalent: ","
+    )
     private let setupItem = NSMenuItem(
         title: "Permissions Setup…",
         action: #selector(showSetup),
         keyEquivalent: ""
     )
 
+    private var onOpenSettings: (() -> Void)?
     private var onShowSetup: (() -> Void)?
     private var onCopyLastTranscript: (() -> Void)?
 
     func install(
+        onOpenSettings: @escaping () -> Void,
         onShowSetup: @escaping () -> Void,
         onCopyLastTranscript: @escaping () -> Void
     ) {
+        self.onOpenSettings = onOpenSettings
         self.onShowSetup = onShowSetup
         self.onCopyLastTranscript = onCopyLastTranscript
 
@@ -36,6 +44,7 @@ final class StatusItemController {
         hintItem.isEnabled = false
         copyItem.target = self
         copyItem.isEnabled = false
+        settingsItem.target = self
         setupItem.target = self
 
         let quitItem = NSMenuItem(
@@ -49,6 +58,7 @@ final class StatusItemController {
             hintItem,
             .separator(),
             copyItem,
+            settingsItem,
             setupItem,
             .separator(),
             quitItem,
@@ -61,8 +71,14 @@ final class StatusItemController {
         let (symbol, description, stateText): (String, String, String) = switch state {
         case .needsPermissions:
             ("mic.slash", "fabulous — needs permissions", "Waiting for permissions")
-        case .loadingModel:
-            ("arrow.down.circle.dotted", "fabulous — loading model", "Downloading / loading model…")
+        case let .loadingModel(progress):
+            (
+                "arrow.down.circle.dotted",
+                "fabulous — loading model",
+                progress.map {
+                    "Downloading model… \($0.formatted(.percent.precision(.fractionLength(0))))"
+                } ?? "Loading model…"
+            )
         case .idle:
             ("mic", "fabulous — ready", "Ready")
         case .recording:
@@ -82,6 +98,10 @@ final class StatusItemController {
 
     func setLastTranscriptAvailable(_ available: Bool) {
         copyItem.isEnabled = available
+    }
+
+    @objc private func openSettings() {
+        onOpenSettings?()
     }
 
     @objc private func showSetup() {
