@@ -8,6 +8,7 @@ final class StatusItemController {
     private let stateItem = NSMenuItem(title: "Starting…", action: nil, keyEquivalent: "")
     private let hintItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let metricsItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private let statsItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let copyItem = NSMenuItem(
         title: "Copy Last Transcript",
         action: #selector(copyLastTranscript),
@@ -45,6 +46,8 @@ final class StatusItemController {
         hintItem.isEnabled = false
         metricsItem.isEnabled = false
         metricsItem.isHidden = true // until the first dictation
+        statsItem.isEnabled = false
+        statsItem.isHidden = true // until stats exist for the active engine
         copyItem.target = self
         copyItem.isEnabled = false
         settingsItem.target = self
@@ -60,6 +63,7 @@ final class StatusItemController {
             stateItem,
             hintItem,
             metricsItem,
+            statsItem,
             .separator(),
             copyItem,
             settingsItem,
@@ -115,6 +119,13 @@ final class StatusItemController {
     func setMetrics(_ summary: String) {
         metricsItem.title = summary
         metricsItem.isHidden = false
+    }
+
+    /// Aggregate p50/p90 line under the last-dictation line; nil hides it
+    /// (e.g. right after switching to an engine with no samples yet).
+    func setLatencyStats(_ summary: String?) {
+        statsItem.title = summary ?? ""
+        statsItem.isHidden = summary == nil
     }
 
     @objc private func openSettings() {

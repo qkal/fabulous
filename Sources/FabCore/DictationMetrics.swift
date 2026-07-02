@@ -53,6 +53,12 @@ public struct DictationMetrics: Sendable, Equatable {
         total > .seconds(budget)
     }
 
+    /// Duration → fractional milliseconds, for persistence.
+    public static func milliseconds(_ duration: Duration) -> Double {
+        Double(duration.components.seconds) * 1000
+            + Double(duration.components.attoseconds) / 1e15
+    }
+
     static func seconds(_ duration: Duration) -> String {
         let secs = Double(duration.components.seconds)
             + Double(duration.components.attoseconds) / 1e18

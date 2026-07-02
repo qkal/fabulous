@@ -33,6 +33,76 @@ public struct TranscriptEntry: Codable, Sendable, Equatable, Identifiable,
     }
 }
 
+/// Per-dictation timing breakdown, persisted so the engine A/B comparison
+/// can be made from p50/p90 over real use instead of memory. Numbers only —
+/// deliberately no transcript text, so recording is independent of the
+/// history toggle and survives "Clear history".
+public struct MetricsEntry: Codable, Sendable, Equatable, Identifiable,
+    FetchableRecord, MutablePersistableRecord
+{
+    public static let databaseTableName = "dictationMetrics"
+
+    public var id: Int64?
+    public var createdAt: Date
+    /// Which engine produced the dictation (`large-v3_turbo`, `apple-speech`, …).
+    public var engineID: String
+    public var audioSeconds: Double
+    public var stopTrimMs: Double
+    public var asrMs: Double
+    public var postMs: Double
+    public var deliveryMs: Double
+    public var totalMs: Double
+
+    public init(
+        id: Int64? = nil,
+        createdAt: Date,
+        engineID: String,
+        audioSeconds: Double,
+        stopTrimMs: Double,
+        asrMs: Double,
+        postMs: Double,
+        deliveryMs: Double,
+        totalMs: Double
+    ) {
+        self.id = id
+        self.createdAt = createdAt
+        self.engineID = engineID
+        self.audioSeconds = audioSeconds
+        self.stopTrimMs = stopTrimMs
+        self.asrMs = asrMs
+        self.postMs = postMs
+        self.deliveryMs = deliveryMs
+        self.totalMs = totalMs
+    }
+
+    public mutating func didInsert(_ inserted: InsertionSuccess) {
+        id = inserted.rowID
+    }
+}
+
+/// Latency percentiles over recent dictations of one engine.
+public struct LatencyStats: Sendable, Equatable {
+    public var sampleCount: Int
+    public var p50TotalMs: Double
+    public var p90TotalMs: Double
+    public var p50ASRMs: Double
+    public var p90ASRMs: Double
+
+    public init(
+        sampleCount: Int,
+        p50TotalMs: Double,
+        p90TotalMs: Double,
+        p50ASRMs: Double,
+        p90ASRMs: Double
+    ) {
+        self.sampleCount = sampleCount
+        self.p50TotalMs = p50TotalMs
+        self.p90TotalMs = p90TotalMs
+        self.p50ASRMs = p50ASRMs
+        self.p90ASRMs = p90ASRMs
+    }
+}
+
 /// Local SQLite history of recent transcripts. Entirely optional: when the
 /// user disables history, the app simply never calls `record`. GRDB's
 /// `DatabaseQueue` serializes access and is Sendable, so this type is a thin
@@ -68,6 +138,19 @@ public final class HistoryStore: Sendable {
                 t.column("createdAt", .datetime).notNull().indexed()
                 t.column("audioSeconds", .double).notNull()
                 t.column("modelID", .text).notNull()
+            }
+        }
+        migrator.registerMigration("v2-create-dictation-metrics") { db in
+            try db.create(table: MetricsEntry.databaseTableName) { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("createdAt", .datetime).notNull().indexed()
+                t.column("engineID", .text).notNull().indexed()
+                t.column("audioSeconds", .double).notNull()
+                t.column("stopTrimMs", .double).notNull()
+                t.column("asrMs", .double).notNull()
+                t.column("postMs", .double).notNull()
+                t.column("deliveryMs", .double).notNull()
+                t.column("totalMs", .double).notNull()
             }
         }
         return migrator
@@ -114,5 +197,53 @@ public final class HistoryStore: Sendable {
 
     public func clear() throws {
         _ = try dbQueue.write { db in try TranscriptEntry.deleteAll(db) }
+    }
+
+    // MARK: - Dictation metrics
+
+    /// Inserts a metrics row and prunes the table down to `cap` newest rows.
+    /// The cap only bounds disk growth; at ~60 bytes a row it's generous.
+    @discardableResult
+    public func recordMetrics(_ entry: MetricsEntry, cap: Int = 5000) throws -> MetricsEntry {
+        try dbQueue.write { db in
+            var entry = entry
+            try entry.insert(db)
+            try db.execute(
+                sql: """
+                DELETE FROM dictationMetrics WHERE id NOT IN
+                  (SELECT id FROM dictationMetrics ORDER BY createdAt DESC, id DESC LIMIT ?)
+                """,
+                arguments: [cap]
+            )
+            return entry
+        }
+    }
+
+    /// p50/p90 latency over the newest `limit` dictations of one engine;
+    /// nil when that engine has no rows yet.
+    public func latencyStats(engineID: String, limit: Int = 500) throws -> LatencyStats? {
+        let rows = try dbQueue.read { db in
+            try MetricsEntry
+                .filter(Column("engineID") == engineID)
+                .order(Column("createdAt").desc, Column("id").desc)
+                .limit(limit)
+                .fetchAll(db)
+        }
+        guard !rows.isEmpty else { return nil }
+        let totals = rows.map(\.totalMs).sorted()
+        let asrs = rows.map(\.asrMs).sorted()
+        return LatencyStats(
+            sampleCount: rows.count,
+            p50TotalMs: Self.percentile(totals, 0.5),
+            p90TotalMs: Self.percentile(totals, 0.9),
+            p50ASRMs: Self.percentile(asrs, 0.5),
+            p90ASRMs: Self.percentile(asrs, 0.9)
+        )
+    }
+
+    /// Nearest-rank percentile of an already-sorted, non-empty array.
+    static func percentile(_ sorted: [Double], _ p: Double) -> Double {
+        let rank = Int((p * Double(sorted.count)).rounded(.up))
+        return sorted[max(0, min(sorted.count - 1, rank - 1))]
     }
 }

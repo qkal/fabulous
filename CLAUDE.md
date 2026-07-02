@@ -54,7 +54,10 @@ sees everything. `TranscriptionEngine` is the only target importing WhisperKit.
   (`security` import needs `openssl pkcs12 -legacy` on OpenSSL 3!);
   `build.sh` auto-detects it. `CODESIGN_IDENTITY` env overrides.
   CSSMERR_TP_NOT_TRUSTED from `find-identity -v` is fine — codesign still
-  signs, and TCC only needs signature stability.
+  signs, and TCC only needs signature stability. If `build.sh` fails with
+  `errSecInternalComponent`, the keychain locked (sleep does this despite
+  no-auto-lock settings): `security unlock-keychain -p fabulous-dev-local
+  ~/Library/Keychains/fabulous-dev.keychain-db`.
 - **`AudioBuffer` name collision**: CoreAudio has one too. In files importing
   AVFoundation, write `FabCore.AudioBuffer`.
 - **WhisperKit's `EnergyVAD`**: WhisperKit also declares `EnergyVAD`. Ours
@@ -83,9 +86,12 @@ sees everything. `TranscriptionEngine` is the only target importing WhisperKit.
   flagsChanged) regardless of trigger kind — Esc interception during
   recording needs keyDown even for modifier-hold specs.
 - **Latency is measured, not assumed**: `DictationMetrics` (FabCore) is
-  filled by `AppController.finishRecording` and surfaced in the menu + log.
-  Keep-warm is deliberate — do NOT add idle model unload without checking
-  the phase-3 spec's reasoning (latency is the user's deal-breaker).
+  filled by `AppController.finishRecording`, surfaced in the menu + log, and
+  persisted per dictation to the `dictationMetrics` table (HistoryStore,
+  numbers only — independent of the history toggle, survives Clear History;
+  the menu shows per-engine p50/p90 from it). Keep-warm is deliberate — do
+  NOT add idle model unload without checking the phase-3 spec's reasoning
+  (latency is the user's deal-breaker).
 - **Transcripts must never be silently lost**: any non-injection path goes
   through `AppController.safetyNet` (clipboard + overlay notice). Preserve
   this invariant when touching delivery code.

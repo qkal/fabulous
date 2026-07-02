@@ -180,6 +180,15 @@ history.sqlite`, capped at 500 entries (pruned on insert). Text only — audio
 is never persisted. The toggle simply stops `record` calls; Clear History
 deletes all rows.
 
+**Dictation metrics** live in the same database but a separate table
+(`dictationMetrics`, cap 5000): per-dictation stage timings + engine ID,
+numbers only. Deliberately decoupled from the history toggle and Clear
+History — the transcript text is the privacy-sensitive part; the latency
+record is the evidence the engine-default decision runs on.
+`HistoryStore.latencyStats(engineID:)` computes nearest-rank p50/p90 over
+the newest 500 rows per engine, shown as a second menu line and refreshed
+on every dictation and engine switch.
+
 ### Post-processing (v1.5 interface, shipped now)
 `TextPostProcessor` — `process(String) async throws -> String`. Shipped:
 `PassthroughPostProcessor`, `PostProcessingPipeline`,

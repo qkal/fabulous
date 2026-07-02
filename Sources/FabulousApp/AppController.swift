@@ -157,6 +157,7 @@ final class AppController {
             try await whisperBackend.load(model: model)
             activeModelID = model.id
             state = .idle
+            refreshLatencyStats()
         } catch ModelManager.ManagerError.offline {
             state = .failed("Offline — can't download \(model.displayName). Connect and retry from Settings → Models.")
         } catch {
@@ -185,6 +186,7 @@ final class AppController {
             speechAnalyzerBackend = engine
             activeModelID = ModelDescriptor.appleSpeech.id
             state = .idle
+            refreshLatencyStats()
         } catch {
             // Reverting the preference fires onEngineChanged, but that
             // callback no-ops outside .idle/.failed — the explicit
@@ -293,6 +295,7 @@ final class AppController {
             activeModelID = model.id
             settings.selectedModelID = model.id
             state = .idle
+            refreshLatencyStats()
         } catch {
             state = .failed("Couldn't switch model: \(shortErrorText(error))")
         }
@@ -460,6 +463,49 @@ final class AppController {
         if metrics.exceedsBudget() {
             NSLog("fabulous: latency budget exceeded (>1.5 s) — see spec phase-3")
         }
+        persistMetrics(metrics)
+    }
+
+    /// Numbers-only persistence, independent of the transcript-history
+    /// toggle: without it, the "decide the engine with data" plan dies the
+    /// way it did in phase 3 (NSLog-only metrics evaporated).
+    private func persistMetrics(_ metrics: DictationMetrics) {
+        guard let history else { return }
+        let engineID = activeModelID ?? "unknown"
+        do {
+            try history.recordMetrics(MetricsEntry(
+                createdAt: Date(),
+                engineID: engineID,
+                audioSeconds: metrics.audioDuration,
+                stopTrimMs: DictationMetrics.milliseconds(metrics.stopAndTrim),
+                asrMs: DictationMetrics.milliseconds(metrics.transcription),
+                postMs: DictationMetrics.milliseconds(metrics.postProcessing),
+                deliveryMs: DictationMetrics.milliseconds(metrics.delivery),
+                totalMs: DictationMetrics.milliseconds(metrics.total)
+            ))
+            let stats = try history.latencyStats(engineID: engineID)
+            statusItem.setLatencyStats(stats.map { Self.statsSummary($0, engineID: engineID) })
+        } catch {
+            NSLog("fabulous: failed to record metrics: \(error)")
+        }
+    }
+
+    /// Repaints the menu's p50/p90 line for the engine that just became
+    /// active (hides it while that engine has no samples yet).
+    private func refreshLatencyStats() {
+        guard let history, let engineID = activeModelID else { return }
+        let stats = try? history.latencyStats(engineID: engineID)
+        statusItem.setLatencyStats(stats.map { Self.statsSummary($0, engineID: engineID) })
+    }
+
+    /// e.g. "Whisper Large v3 Turbo · p50 1.12 s · p90 1.48 s · 42 runs"
+    static func statsSummary(_ stats: LatencyStats, engineID: String) -> String {
+        let name = ModelCatalog.descriptor(withID: engineID)?.displayName
+            ?? (engineID == ModelDescriptor.appleSpeech.id
+                ? ModelDescriptor.appleSpeech.displayName : engineID)
+        let p50 = String(format: "%.2f", stats.p50TotalMs / 1000)
+        let p90 = String(format: "%.2f", stats.p90TotalMs / 1000)
+        return "\(name) · p50 \(p50) s · p90 \(p90) s · \(stats.sampleCount) run\(stats.sampleCount == 1 ? "" : "s")"
     }
 
     private func rebuildPostProcessor() {
