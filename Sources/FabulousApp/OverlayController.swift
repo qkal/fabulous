@@ -15,8 +15,6 @@ final class OverlayModel {
     var phase: Phase = .recording
     /// Smoothed input level, 0…1.
     var level: Float = 0
-    /// Transcription decode progress, 0…1.
-    var progress: Double = 0
     /// Drives the pop-in/out animation; the panel outlives the transition.
     var visible: Bool = false
 }
@@ -45,13 +43,7 @@ final class OverlayController {
 
     func showTranscribing() {
         model.phase = .transcribing
-        model.progress = 0
         show()
-    }
-
-    func updateProgress(_ fraction: Double) {
-        // Monotonic — a progress readout that moves backwards reads as broken.
-        model.progress = max(model.progress, min(1, fraction))
     }
 
     func updateLevel(_ level: Float) {
@@ -165,13 +157,8 @@ private struct OverlayView: View {
                 }
             case .transcribing:
                 CapsuleChrome {
-                    HStack(spacing: 9) {
-                        PixelSpinner()
-                            .frame(width: 20, height: 20)
-                        Text(percentText)
-                            .font(.caption.weight(.medium).monospacedDigit())
-                            .foregroundStyle(.white.opacity(0.85))
-                    }
+                    CometSpinner()
+                        .frame(width: 22, height: 22)
                 }
             case let .message(text):
                 CapsuleChrome {
@@ -198,13 +185,6 @@ private struct OverlayView: View {
         .animation(.easeOut(duration: 0.18), value: model.phase)
     }
 
-    /// Honest about where decoding stands. Shows "…" until the first real
-    /// progress report arrives rather than pretending with a fake number.
-    private var percentText: String {
-        model.progress > 0
-            ? "\(Int((model.progress * 100).rounded()))%"
-            : "…"
-    }
 }
 
 /// The capsule shell: near-black glass with a whisper of a rim line — and
@@ -288,34 +268,35 @@ private struct SiriWave: View {
     }
 }
 
-/// A pixel-ring spinner: twelve square pixels in a circle, lit as a comet
-/// that steps around the ring in discrete ticks.
-private struct PixelSpinner: View {
-    private static let pixels = 12
-
+/// The transcribing spinner: a bright arc with a long fading tail, sweeping
+/// smoothly around a faint track. One element, no text — the classic shape,
+/// drawn with the overlay's own light.
+private struct CometSpinner: View {
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 20.0)) { timeline in
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { timeline in
             let t = timeline.date.timeIntervalSinceReferenceDate
-            Canvas { context, size in
-                let count = Self.pixels
-                let cell: CGFloat = 2.8
-                let radius = min(size.width, size.height) / 2 - cell
-                let mid = CGPoint(x: size.width / 2, y: size.height / 2)
-                // Discrete ticks, not smooth rotation — pixels don't glide.
-                let head = Int(t * 12) % count
+            let angle = Angle(degrees: (t * 300).truncatingRemainder(dividingBy: 360))
 
-                for index in 0..<count {
-                    let angle = Double(index) / Double(count) * 2 * .pi - .pi / 2
-                    let x = mid.x + cos(angle) * radius - cell / 2
-                    let y = mid.y + sin(angle) * radius - cell / 2
-                    // Comet tail: brightness falls off behind the head.
-                    let lag = (head - index + count) % count
-                    let opacity = max(0.08, 1.0 - Double(lag) * 0.16)
-                    context.fill(
-                        Path(CGRect(x: x, y: y, width: cell, height: cell)),
-                        with: .color(OverlayStyle.ice.opacity(opacity))
+            ZStack {
+                // The faint full track grounds the motion.
+                Circle()
+                    .stroke(OverlayStyle.ice.opacity(0.15), lineWidth: 2.5)
+                // The comet: a gradient tail ending in a bright head.
+                Circle()
+                    .trim(from: 0.08, to: 0.42)
+                    .stroke(
+                        AngularGradient(
+                            gradient: Gradient(colors: [
+                                OverlayStyle.ice.opacity(0),
+                                OverlayStyle.ice,
+                            ]),
+                            center: .center,
+                            startAngle: .degrees(0.08 * 360),
+                            endAngle: .degrees(0.42 * 360)
+                        ),
+                        style: StrokeStyle(lineWidth: 2.5, lineCap: .round)
                     )
-                }
+                    .rotationEffect(angle)
             }
         }
     }

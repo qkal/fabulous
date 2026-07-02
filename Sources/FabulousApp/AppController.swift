@@ -296,11 +296,9 @@ final class AppController {
         state = .transcribing
         overlay.showTranscribing()
         do {
-            let transcript = try await backend.transcribe(audio, language: nil) { [weak self] fraction in
-                Task { @MainActor [weak self] in
-                    self?.overlay.updateProgress(fraction)
-                }
-            }
+            // The spinner is indeterminate; the backend's onProgress hook
+            // stays available for a future progress UI.
+            let transcript = try await backend.transcribe(audio, language: nil)
             let transcribedAt = clock.now
             let text = try await postProcessor.process(transcript.text)
             let processedAt = clock.now
