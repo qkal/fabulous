@@ -32,16 +32,29 @@ for bundle in "${BIN_DIR}"/*.bundle; do
   cp -R "${bundle}" "${APP}/Contents/Resources/"
 done
 
-if [ -n "${CODESIGN_IDENTITY:-}" ]; then
-  echo "==> codesign (identity: ${CODESIGN_IDENTITY}, hardened runtime)"
-  codesign --force --options runtime \
-    --entitlements Support/fabulous.entitlements \
-    --sign "${CODESIGN_IDENTITY}" "${APP}"
+# Signing identity resolution: explicit env var wins; otherwise use the
+# first code-signing identity in the keychain (scripts/make-dev-cert.sh
+# creates a local "fabulous-dev" one); ad-hoc only as a last resort.
+if [ -z "${CODESIGN_IDENTITY:-}" ]; then
+  CODESIGN_IDENTITY=$(security find-identity -p codesigning 2>/dev/null \
+    | sed -n 's/^ *[0-9]*) [0-9A-F]* "\(.*\)".*$/\1/p' | head -1)
+fi
+
+if [ -n "${CODESIGN_IDENTITY}" ]; then
+  echo "==> codesign (identity: ${CODESIGN_IDENTITY})"
+  if [[ "${CODESIGN_IDENTITY}" == "Developer ID"* ]]; then
+    # Distribution builds get the hardened runtime (notarization needs it).
+    codesign --force --options runtime \
+      --entitlements Support/fabulous.entitlements \
+      --sign "${CODESIGN_IDENTITY}" "${APP}"
+  else
+    codesign --force --sign "${CODESIGN_IDENTITY}" "${APP}"
+  fi
 else
   echo "==> codesign (ad-hoc dev signing)"
   echo "    NOTE: TCC permissions (Mic/Accessibility) must be re-granted"
-  echo "    after every rebuild with ad-hoc signing. Set CODESIGN_IDENTITY"
-  echo "    to a stable identity to avoid this."
+  echo "    after every rebuild with ad-hoc signing. Run"
+  echo "    scripts/make-dev-cert.sh once to create a stable local identity."
   codesign --force --sign - "${APP}"
 fi
 

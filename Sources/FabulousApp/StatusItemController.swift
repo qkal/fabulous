@@ -7,6 +7,7 @@ final class StatusItemController {
     private var statusItem: NSStatusItem?
     private let stateItem = NSMenuItem(title: "Starting…", action: nil, keyEquivalent: "")
     private let hintItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private let metricsItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let copyItem = NSMenuItem(
         title: "Copy Last Transcript",
         action: #selector(copyLastTranscript),
@@ -42,6 +43,8 @@ final class StatusItemController {
         let menu = NSMenu()
         stateItem.isEnabled = false
         hintItem.isEnabled = false
+        metricsItem.isEnabled = false
+        metricsItem.isHidden = true // until the first dictation
         copyItem.target = self
         copyItem.isEnabled = false
         settingsItem.target = self
@@ -56,6 +59,7 @@ final class StatusItemController {
         menu.items = [
             stateItem,
             hintItem,
+            metricsItem,
             .separator(),
             copyItem,
             settingsItem,
@@ -98,6 +102,11 @@ final class StatusItemController {
 
     func setLastTranscriptAvailable(_ available: Bool) {
         copyItem.isEnabled = available
+    }
+
+    func setMetrics(_ summary: String) {
+        metricsItem.title = summary
+        metricsItem.isHidden = false
     }
 
     @objc private func openSettings() {

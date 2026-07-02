@@ -31,11 +31,14 @@ swift test              # unit tests
 open build/fabulous.app
 ```
 
-For a stable signature (keeps permission grants across rebuilds):
+For a stable signature (keeps permission grants across rebuilds), run once:
 
 ```sh
-CODESIGN_IDENTITY="Apple Development: you@example.com (TEAMID)" scripts/build.sh
+scripts/make-dev-cert.sh   # creates a local "fabulous-dev" signing identity
 ```
+
+`build.sh` picks it up automatically from then on. To use a real Apple
+identity instead, set `CODESIGN_IDENTITY` explicitly.
 
 ## First run
 
@@ -59,8 +62,13 @@ smaller download? Open Settings → Models and install `base` (~150 MB) or
 
 Hold **Right ⌥ (Option)**, speak, release. The transcript is inserted into
 the focused text field, and a small pill at the bottom of the screen shows
-recording level and transcription progress. If a password field has focus,
-fabulous refuses to type.
+recording level and transcription progress. Subtle sound cues mark start and
+stop; press **Esc** mid-recording to discard. After each dictation the menu
+bar shows the latency breakdown ("Last: 1.3 s · ASR 1.0 s").
+
+A transcript is never silently lost: if a password field has focus, the
+focused app changed mid-dictation, or insertion fails, the text lands on the
+clipboard and the pill tells you why.
 
 Everything is configurable in Settings (menu bar icon → Settings…):
 
@@ -68,6 +76,8 @@ Everything is configurable in Settings (menu bar icon → Settings…):
   in hold-to-talk or tap-to-toggle mode.
 - **Microphone** — pick a specific input or follow the system default.
 - **Models** — download, switch, or delete models.
+- **Replacements** — whole-word fixes for names the model keeps mishearing
+  ("anthropite" → "Anthropite").
 - **History** — the last 500 transcripts, stored only on this Mac (SQLite),
   with a toggle to disable and a Clear History button. Audio is never stored.
 

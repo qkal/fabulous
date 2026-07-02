@@ -45,9 +45,13 @@ sees everything. `TranscriptionEngine` is the only target importing WhisperKit.
 
 ## Gotchas (hard-won)
 
-- **TCC + ad-hoc signing**: every rebuild changes the cdhash, so macOS
-  silently revokes Microphone/Accessibility grants. Re-toggle fabulous in
-  System Settings, or export `CODESIGN_IDENTITY` for a stable signature.
+- **TCC + signing**: ad-hoc signatures change every rebuild → macOS revokes
+  Microphone/Accessibility grants. `scripts/make-dev-cert.sh` (run once)
+  creates a self-signed "fabulous-dev" identity in a dedicated keychain
+  (`security` import needs `openssl pkcs12 -legacy` on OpenSSL 3!);
+  `build.sh` auto-detects it. `CODESIGN_IDENTITY` env overrides.
+  CSSMERR_TP_NOT_TRUSTED from `find-identity -v` is fine — codesign still
+  signs, and TCC only needs signature stability.
 - **`AudioBuffer` name collision**: CoreAudio has one too. In files importing
   AVFoundation, write `FabCore.AudioBuffer`.
 - **WhisperKit's `EnergyVAD`**: WhisperKit also declares `EnergyVAD`. Ours
@@ -72,7 +76,16 @@ sees everything. `TranscriptionEngine` is the only target importing WhisperKit.
   option, not a hang.
 - **Hotkey chords are swallowed** by returning nil from the event tap
   callback; modifier-hold events always pass through. The NSEvent fallback
-  can't swallow.
+  can't swallow. The tap listens to ALL key events (keyDown/keyUp/
+  flagsChanged) regardless of trigger kind — Esc interception during
+  recording needs keyDown even for modifier-hold specs.
+- **Latency is measured, not assumed**: `DictationMetrics` (FabCore) is
+  filled by `AppController.finishRecording` and surfaced in the menu + log.
+  Keep-warm is deliberate — do NOT add idle model unload without checking
+  the phase-3 spec's reasoning (latency is the user's deal-breaker).
+- **Transcripts must never be silently lost**: any non-injection path goes
+  through `AppController.safetyNet` (clipboard + overlay notice). Preserve
+  this invariant when touching delivery code.
 - **`SMAppService` (launch at login)** fails when running the bare binary
   (`swift run`) — it needs a real .app bundle; the settings UI surfaces the
   error rather than crashing.
@@ -86,10 +99,14 @@ hotkey recorder (modifier-hold + key chords, PTT/toggle), input device
 picker, launch-at-login; model management (catalog large-v3-turbo/small/base,
 download progress, delete, hot-swap, offline detection); bottom-center
 recording overlay with level meter; transcript history (GRDB, cap 500,
-toggle + clear).
+toggle + clear); phase 3 "trustworthy daily driver" (docs/specs/): stable
+local signing, per-dictation latency metrics in menu + log, sound cues,
+Esc-cancels-recording, injection safety net (clipboard + overlay notice),
+focus-change guard, replacements editor tab.
 
-Not yet built: Parakeet/FluidAudio backend, SpeechAnalyzer backend
-(macOS 26+), Silero VAD, per-app injection override settings UI,
-replacement-dictionary editor UI, idle model unload, LLM post-processing
-(interface exists: `TextPostProcessor`), signed/notarized .dmg release
-pipeline. See docs/architecture.md.
+Not yet built: Silero VAD (phase-3 stretch, slipped), Parakeet/FluidAudio
+backend and streaming transcription (parked pending latency data),
+SpeechAnalyzer backend (macOS 26+), per-app injection override settings UI,
+LLM post-processing (interface exists: `TextPostProcessor`),
+signed/notarized .dmg release pipeline. See docs/architecture.md and
+docs/specs/phase-3-trustworthy-daily-driver.md.

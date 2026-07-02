@@ -8,6 +8,8 @@ final class OverlayModel {
     enum Phase: Equatable {
         case recording
         case transcribing
+        /// Transient notice, e.g. "Focus changed — copied to clipboard".
+        case message(String)
     }
 
     var phase: Phase = .recording
@@ -24,7 +26,7 @@ final class OverlayController {
     private let model = OverlayModel()
     private var panel: NSPanel?
 
-    private static let pillSize = NSSize(width: 240, height: 52)
+    private static let pillSize = NSSize(width: 320, height: 52)
     private static let bottomMargin: CGFloat = 96
 
     func showRecording() {
@@ -44,9 +46,26 @@ final class OverlayController {
         model.level = model.level * 0.6 + min(1, level * 4) * 0.4
     }
 
+    /// Shows a transient notice in the pill, then hides. Used by the
+    /// injection safety net so failures are visible without being modal.
+    func showMessage(_ text: String, hideAfter seconds: Double = 3) {
+        model.phase = .message(text)
+        show()
+        messageTask?.cancel()
+        messageTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(seconds))
+            guard !Task.isCancelled, let self else { return }
+            if case .message = model.phase {
+                hide()
+            }
+        }
+    }
+
     func hide() {
         panel?.orderOut(nil)
     }
+
+    private var messageTask: Task<Void, Never>?
 
     private func show() {
         let panel = self.panel ?? makePanel()
@@ -113,9 +132,18 @@ private struct OverlayView: View {
                 Text("Transcribing…")
                     .font(.callout)
                     .foregroundStyle(.white.opacity(0.9))
+            case let .message(text):
+                Image(systemName: "exclamationmark.circle.fill")
+                    .foregroundStyle(.yellow)
+                Text(text)
+                    .font(.callout)
+                    .foregroundStyle(.white.opacity(0.9))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
             }
         }
-        .frame(width: 240, height: 52)
+        .padding(.horizontal, 18)
+        .frame(width: 320, height: 52)
         .background(
             RoundedRectangle(cornerRadius: 26, style: .continuous)
                 .fill(.black.opacity(0.82))

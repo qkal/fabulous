@@ -14,10 +14,13 @@ final class SettingsStore {
         static let selectedModelID = "selectedModelID"
         static let inputDeviceUID = "inputDeviceUID"
         static let historyEnabled = "historyEnabled"
+        static let soundCuesEnabled = "soundCuesEnabled"
+        static let replacementEntries = "replacementEntries"
     }
 
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored var onHotkeyChanged: (() -> Void)?
+    @ObservationIgnored var onReplacementsChanged: (() -> Void)?
 
     var hotkeySpec: HotkeySpec {
         didSet {
@@ -44,6 +47,21 @@ final class SettingsStore {
         didSet { defaults.set(historyEnabled, forKey: Keys.historyEnabled) }
     }
 
+    var soundCuesEnabled: Bool {
+        didSet { defaults.set(soundCuesEnabled, forKey: Keys.soundCuesEnabled) }
+    }
+
+    /// Custom text replacements, applied to every transcript in order.
+    var replacementEntries: [ReplacementDictionary.Entry] {
+        didSet {
+            guard replacementEntries != oldValue else { return }
+            if let data = try? JSONEncoder().encode(replacementEntries) {
+                defaults.set(data, forKey: Keys.replacementEntries)
+            }
+            onReplacementsChanged?()
+        }
+    }
+
     let historyCap = 500
 
     init(defaults: UserDefaults = .standard) {
@@ -55,5 +73,9 @@ final class SettingsStore {
             ?? ModelCatalog.recommended.id
         inputDeviceUID = defaults.string(forKey: Keys.inputDeviceUID)
         historyEnabled = defaults.object(forKey: Keys.historyEnabled) as? Bool ?? true
+        soundCuesEnabled = defaults.object(forKey: Keys.soundCuesEnabled) as? Bool ?? true
+        replacementEntries = defaults.data(forKey: Keys.replacementEntries)
+            .flatMap { try? JSONDecoder().decode([ReplacementDictionary.Entry].self, from: $0) }
+            ?? []
     }
 }

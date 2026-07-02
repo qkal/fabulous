@@ -22,6 +22,8 @@ public final class HotkeyMonitor {
 
     public var onPressBegan: (() -> Void)?
     public var onPressEnded: (() -> Void)?
+    /// Fires when Escape is pressed while `interceptEscape` is on.
+    public var onEscapePressed: (() -> Void)?
 
     public private(set) var backend: Backend = .none
     public private(set) var spec: HotkeySpec = .default
@@ -29,6 +31,13 @@ public final class HotkeyMonitor {
     /// While true (hotkey recorder UI is capturing), events pass through
     /// untouched and no callbacks fire.
     public var isSuspended = false
+
+    /// While true (a recording is in flight), Escape triggers
+    /// `onEscapePressed` and — on the event-tap backend — is swallowed so it
+    /// doesn't also reach the focused app.
+    public var interceptEscape = false
+
+    private static let escapeKeyCode: Int64 = 53
 
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
@@ -69,14 +78,13 @@ public final class HotkeyMonitor {
 
     // MARK: - Event tap backend
 
+    /// All key event types, regardless of trigger kind: modifier-hold specs
+    /// still need keyDown for Escape interception during recording. The
+    /// per-event cost of passing keystrokes through is microseconds.
     private var eventMask: CGEventMask {
-        switch spec.trigger {
-        case .modifierHold:
-            CGEventMask(1) << CGEventType.flagsChanged.rawValue
-        case .keyChord:
-            CGEventMask(1) << CGEventType.keyDown.rawValue
-                | CGEventMask(1) << CGEventType.keyUp.rawValue
-        }
+        CGEventMask(1) << CGEventType.flagsChanged.rawValue
+            | CGEventMask(1) << CGEventType.keyDown.rawValue
+            | CGEventMask(1) << CGEventType.keyUp.rawValue
     }
 
     private func startEventTap() -> Bool {
@@ -114,6 +122,10 @@ public final class HotkeyMonitor {
             return false
         case .flagsChanged, .keyDown, .keyUp:
             guard !isSuspended else { return false }
+            if interceptEscape, type == .keyDown, keyCode == Self.escapeKeyCode {
+                onEscapePressed?()
+                return true
+            }
             return handleKeyEvent(
                 type: type, keyCode: keyCode, flags: flags, isAutorepeat: isAutorepeat
             )
@@ -125,18 +137,20 @@ public final class HotkeyMonitor {
     // MARK: - Global monitor fallback
 
     private func startGlobalMonitor() -> Bool {
-        let mask: NSEvent.EventTypeMask = switch spec.trigger {
-        case .modifierHold: .flagsChanged
-        case .keyChord: [.keyDown, .keyUp]
-        }
         // Global monitor handlers run on the main thread. Events can't be
-        // swallowed from here — chords will also reach the focused app.
-        let monitor = NSEvent.addGlobalMonitorForEvents(matching: mask) { [weak self] event in
+        // swallowed from here — chords (and Escape) also reach the app.
+        let monitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.flagsChanged, .keyDown, .keyUp]
+        ) { [weak self] event in
             guard let self, !isSuspended else { return }
             let type: CGEventType = switch event.type {
             case .keyDown: .keyDown
             case .keyUp: .keyUp
             default: .flagsChanged
+            }
+            if interceptEscape, type == .keyDown, Int64(event.keyCode) == Self.escapeKeyCode {
+                onEscapePressed?()
+                return
             }
             _ = handleKeyEvent(
                 type: type,

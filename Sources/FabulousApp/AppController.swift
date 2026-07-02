@@ -31,9 +31,9 @@ final class AppController {
     private let injector = TextInjector()
     private let hotkey = HotkeyMonitor()
     private let modelManager = ModelManager()
-    // Passthrough today; the replacement dictionary and (v1.5) LLM cleanup
-    // slot in here once they grow settings UI.
-    private let postProcessor: any TextPostProcessor = PassthroughPostProcessor()
+    // Rebuilt from the settings' replacement entries; the (v1.5) LLM cleanup
+    // pass slots in here as another pipeline stage.
+    private var postProcessor: any TextPostProcessor = PassthroughPostProcessor()
 
     // App state & UI
     private let settings = SettingsStore()
@@ -49,6 +49,11 @@ final class AppController {
     private(set) var lastTranscript: String?
     /// The model currently loaded in the backend (nil while none is).
     private var activeModelID: String?
+    /// Frontmost app when recording began — the injection target. If the
+    /// frontmost app changes before injection, we refuse rather than type
+    /// into the wrong window.
+    private var recordingTargetPID: pid_t?
+    private let clock = ContinuousClock()
 
     /// Recordings shorter than this are almost certainly an accidental tap.
     private let minimumUtteranceDuration: TimeInterval = 0.25
@@ -69,6 +74,10 @@ final class AppController {
         )
         hotkey.onPressBegan = { [weak self] in self?.hotkeyPressed() }
         hotkey.onPressEnded = { [weak self] in self?.hotkeyReleased() }
+        hotkey.onEscapePressed = { [weak self] in
+            guard let self else { return }
+            Task { await self.cancelRecording() }
+        }
         settings.onHotkeyChanged = { [weak self] in
             guard let self else { return }
             if hotkey.backend != .none {
@@ -76,6 +85,8 @@ final class AppController {
             }
             statusItem.update(for: state, hotkeyName: settings.hotkeySpec.displayName)
         }
+        settings.onReplacementsChanged = { [weak self] in self?.rebuildPostProcessor() }
+        rebuildPostProcessor()
 
         if Permissions.allGranted {
             activateDictation()
@@ -245,18 +256,37 @@ final class AppController {
         }
         do {
             try await recorder.start(deviceUID: settings.inputDeviceUID)
+            recordingTargetPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
+            hotkey.interceptEscape = true
             state = .recording
             overlay.showRecording()
             startLevelUpdates()
+            if settings.soundCuesEnabled { SoundCues.recordingStarted() }
         } catch {
             await flashFailure("Couldn't start recording: \(error)")
         }
     }
 
-    private func finishRecording() async {
+    /// Esc during recording: discard everything, transcribe nothing.
+    private func cancelRecording() async {
+        guard state == .recording else { return }
+        hotkey.interceptEscape = false
         stopLevelUpdates()
         var audio = await recorder.stop()
+        audio.zero()
+        state = .idle
+        overlay.hide()
+        if settings.soundCuesEnabled { SoundCues.recordingCancelled() }
+    }
+
+    private func finishRecording() async {
+        let releasedAt = clock.now
+        hotkey.interceptEscape = false
+        stopLevelUpdates()
+        if settings.soundCuesEnabled { SoundCues.recordingStopped() }
+        var audio = await recorder.stop()
         defer { audio.zero() }
+        let stoppedAt = clock.now
 
         guard audio.duration >= minimumUtteranceDuration else {
             state = .idle
@@ -267,7 +297,9 @@ final class AppController {
         overlay.showTranscribing()
         do {
             let transcript = try await backend.transcribe(audio, language: nil)
+            let transcribedAt = clock.now
             let text = try await postProcessor.process(transcript.text)
+            let processedAt = clock.now
             guard !text.isEmpty else {
                 state = .idle
                 overlay.hide()
@@ -276,20 +308,58 @@ final class AppController {
             lastTranscript = text
             statusItem.setLastTranscriptAvailable(true)
             recordHistory(text: text, audioSeconds: audio.duration)
-            try await injector.inject(text)
+
+            await deliver(text)
+            let deliveredAt = clock.now
+
             state = .idle
-            overlay.hide()
-        } catch let InjectionError.refused(reason) {
-            overlay.hide()
-            let message = switch reason {
-            case .secureInputActive: "A password field has focus — not typing there."
-            case .accessibilityNotGranted: "Accessibility permission was revoked."
-            }
-            await flashFailure(message)
+            noteMetrics(DictationMetrics(
+                audioDuration: audio.duration,
+                stopAndTrim: stoppedAt - releasedAt,
+                transcription: transcribedAt - stoppedAt,
+                postProcessing: processedAt - transcribedAt,
+                delivery: deliveredAt - processedAt,
+                total: deliveredAt - releasedAt
+            ))
         } catch {
             overlay.hide()
             await flashFailure("Transcription failed: \(error)")
         }
+    }
+
+    /// Injects the transcript — or, when injection is impossible (focus
+    /// moved, secure input, all strategies failed), runs the safety net:
+    /// the text goes to the clipboard and the pill says why. A transcript
+    /// is never silently lost.
+    private func deliver(_ text: String) async {
+        if let target = recordingTargetPID,
+           let current = NSWorkspace.shared.frontmostApplication?.processIdentifier,
+           current != target
+        {
+            safetyNet(text, notice: "Focus changed — transcript copied to clipboard")
+            return
+        }
+        do {
+            try await injector.inject(text)
+            overlay.hide()
+        } catch let InjectionError.refused(reason) {
+            let notice = switch reason {
+            case .secureInputActive:
+                "Password field — transcript copied to clipboard"
+            case .accessibilityNotGranted:
+                "Accessibility revoked — transcript copied to clipboard"
+            }
+            safetyNet(text, notice: notice)
+        } catch {
+            safetyNet(text, notice: "Couldn't insert — transcript copied to clipboard")
+        }
+    }
+
+    private func safetyNet(_ text: String, notice: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        overlay.showMessage(notice)
+        NSLog("fabulous: safety net — \(notice)")
     }
 
     private func startLevelUpdates() {
@@ -307,6 +377,21 @@ final class AppController {
     private func stopLevelUpdates() {
         levelTask?.cancel()
         levelTask = nil
+    }
+
+    private func noteMetrics(_ metrics: DictationMetrics) {
+        statusItem.setMetrics(metrics.menuSummary)
+        NSLog("fabulous: \(metrics.logLine)")
+        if metrics.exceedsBudget() {
+            NSLog("fabulous: latency budget exceeded (>1.5 s) — see spec phase-3")
+        }
+    }
+
+    private func rebuildPostProcessor() {
+        let entries = settings.replacementEntries.filter { !$0.pattern.isEmpty }
+        postProcessor = entries.isEmpty
+            ? PassthroughPostProcessor()
+            : ReplacementDictionary(entries: entries)
     }
 
     private func recordHistory(text: String, audioSeconds: TimeInterval) {

@@ -29,6 +29,8 @@ struct SettingsRootView: View {
                 connectivity: connectivity, actions: actions
             )
             .tabItem { Label("Models", systemImage: "brain") }
+            ReplacementsSettingsTab(store: store)
+                .tabItem { Label("Replacements", systemImage: "character.cursor.ibeam") }
             HistorySettingsTab(store: store, actions: actions)
                 .tabItem { Label("History", systemImage: "clock.arrow.circlepath") }
         }
@@ -81,6 +83,7 @@ private struct GeneralSettingsTab: View {
                         Text(device.name).tag(String?.some(device.id))
                     }
                 }
+                Toggle("Play sound when recording starts and stops", isOn: $store.soundCuesEnabled)
             }
 
             Section {
@@ -234,6 +237,72 @@ private struct ModelRow: View {
             Label("Active", systemImage: "checkmark.circle.fill")
                 .foregroundStyle(.green)
         }
+    }
+}
+
+// MARK: - Replacements
+
+private struct ReplacementsSettingsTab: View {
+    @Bindable var store: SettingsStore
+
+    @State private var newPattern = ""
+    @State private var newReplacement = ""
+
+    var body: some View {
+        Form {
+            Section {
+                Text("Whole-word fixes applied to every transcript — project names, jargon, anything the model keeps mishearing. Case-insensitive.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Add replacement") {
+                HStack {
+                    TextField("heard as… (e.g. anthropite)", text: $newPattern)
+                    Image(systemName: "arrow.right").foregroundStyle(.secondary)
+                    TextField("replace with… (e.g. Anthropite)", text: $newReplacement)
+                    Button("Add") { add() }
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(newPattern.trimmingCharacters(in: .whitespaces).isEmpty
+                            || newReplacement.isEmpty)
+                }
+            }
+
+            Section("Active replacements") {
+                if store.replacementEntries.isEmpty {
+                    Text("None yet.").foregroundStyle(.secondary)
+                } else {
+                    ForEach(Array(store.replacementEntries.enumerated()), id: \.offset) { index, entry in
+                        HStack {
+                            Text(entry.pattern)
+                            Image(systemName: "arrow.right")
+                                .foregroundStyle(.secondary)
+                                .font(.caption)
+                            Text(entry.replacement).bold()
+                            Spacer()
+                            Button {
+                                store.replacementEntries.remove(at: index)
+                            } label: {
+                                Image(systemName: "trash")
+                            }
+                            .buttonStyle(.borderless)
+                            .help("Remove")
+                        }
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private func add() {
+        let pattern = newPattern.trimmingCharacters(in: .whitespaces)
+        guard !pattern.isEmpty, !newReplacement.isEmpty else { return }
+        store.replacementEntries.append(
+            .init(pattern: pattern, replacement: newReplacement)
+        )
+        newPattern = ""
+        newReplacement = ""
     }
 }
 
