@@ -128,6 +128,20 @@ private struct GeneralSettingsPane: View {
                 Toggle("Play sound when recording starts and stops", isOn: $store.soundCuesEnabled)
             }
 
+            if #available(macOS 26.0, *) {
+                Section("Transcription") {
+                    Picker("Engine", selection: $store.transcriptionEngine) {
+                        ForEach(TranscriptionEngineKind.allCases, id: \.self) { kind in
+                            Text(kind.displayName).tag(kind)
+                        }
+                    }
+                    .pickerStyle(.radioGroup)
+                    Text("Apple Speech uses the system's on-device recognizer — faster, but accuracy may differ. Whisper models are picked in the Models tab.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             Section {
                 Toggle("Launch fabulous at login", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { _, newValue in

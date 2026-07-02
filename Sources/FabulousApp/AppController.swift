@@ -27,7 +27,16 @@ final class AppController {
 
     // Engines
     private let recorder = AudioRecorder()
-    private let backend = WhisperKitBackend()
+    private let whisperBackend = WhisperKitBackend()
+    /// Created lazily on first use (macOS 26+ only).
+    private var speechAnalyzerBackend: (any TranscriptionBackend)?
+    /// The backend dictations go through, per the engine preference.
+    private var backend: any TranscriptionBackend {
+        if settings.transcriptionEngine == .appleSpeech, let speechAnalyzerBackend {
+            return speechAnalyzerBackend
+        }
+        return whisperBackend
+    }
     private let injector = TextInjector()
     private let hotkey = HotkeyMonitor()
     private let modelManager = ModelManager()
@@ -86,13 +95,32 @@ final class AppController {
             statusItem.update(for: state, hotkeyName: settings.hotkeySpec.displayName)
         }
         settings.onReplacementsChanged = { [weak self] in self?.rebuildPostProcessor() }
+        settings.onEngineChanged = { [weak self] in
+            guard let self, state == .idle || isFailed(state) else { return }
+            Task { await self.ensureSelectedModelLoaded() }
+        }
         rebuildPostProcessor()
+
+        Task { await upgradeVAD() }
 
         if Permissions.allGranted {
             activateDictation()
         } else {
             state = .needsPermissions
             showOnboarding()
+        }
+    }
+
+    /// Best-effort upgrade from the energy heuristic to Silero VAD. Offline
+    /// or failed? The recorder just keeps trimming with EnergyVAD.
+    private func upgradeVAD() async {
+        do {
+            let modelURL = try await SileroVADInstaller.installIfNeeded()
+            let vad = try SileroVAD(modelURL: modelURL)
+            await recorder.setVAD(vad)
+            NSLog("fabulous: Silero VAD active")
+        } catch {
+            NSLog("fabulous: Silero VAD unavailable (\(error)); staying on energy VAD")
         }
     }
 
@@ -110,19 +138,60 @@ final class AppController {
     }
 
     private func ensureSelectedModelLoaded() async {
+        switch settings.transcriptionEngine {
+        case .whisper: await loadWhisper()
+        case .appleSpeech: await loadAppleSpeech()
+        }
+    }
+
+    private func loadWhisper() async {
+        // Free the Apple Speech locale hold; keep-warm applies to the
+        // active engine only.
+        if let inactive = speechAnalyzerBackend { await inactive.unload() }
         let model = selectedModel
         do {
             if await !modelManager.isInstalled(model) {
                 try await downloadModel(model, drivesAppState: true)
             }
             state = .loadingModel(nil)
-            try await backend.load(model: model)
+            try await whisperBackend.load(model: model)
             activeModelID = model.id
             state = .idle
         } catch ModelManager.ManagerError.offline {
             state = .failed("Offline — can't download \(model.displayName). Connect and retry from Settings → Models.")
         } catch {
             state = .failed("Model load failed: \(error.localizedDescription)")
+        }
+        await refreshModelList()
+    }
+
+    /// Loads the Apple Speech engine; any failure reverts the preference and
+    /// falls back to Whisper so dictation keeps working.
+    private func loadAppleSpeech() async {
+        guard #available(macOS 26.0, *) else {
+            state = .loadingModel(nil)
+            settings.transcriptionEngine = .whisper
+            await flashFailure("Apple Speech needs macOS 26 — using Whisper")
+            await loadWhisper()
+            return
+        }
+        // Whisper's multi-GB model has no business staying resident while
+        // another engine handles dictation.
+        await whisperBackend.unload()
+        state = .loadingModel(nil)
+        do {
+            let engine = speechAnalyzerBackend ?? SpeechAnalyzerBackend()
+            try await engine.load(model: .appleSpeech)
+            speechAnalyzerBackend = engine
+            activeModelID = ModelDescriptor.appleSpeech.id
+            state = .idle
+        } catch {
+            // Reverting the preference fires onEngineChanged, but that
+            // callback no-ops outside .idle/.failed — the explicit
+            // loadWhisper below is what actually restores dictation.
+            settings.transcriptionEngine = .whisper
+            await flashFailure("Apple Speech failed (\(shortErrorText(error))) — using Whisper")
+            await loadWhisper()
         }
         await refreshModelList()
     }
@@ -215,8 +284,12 @@ final class AppController {
     private func switchModel(to model: ModelDescriptor) async {
         guard state == .idle || isFailed(state) else { return }
         state = .loadingModel(nil)
+        // Picking a Whisper variant is an implicit engine choice. Setting the
+        // preference here is safe: onEngineChanged no-ops while loading.
+        settings.transcriptionEngine = .whisper
+        if let inactive = speechAnalyzerBackend { await inactive.unload() }
         do {
-            try await backend.load(model: model)
+            try await whisperBackend.load(model: model)
             activeModelID = model.id
             settings.selectedModelID = model.id
             state = .idle

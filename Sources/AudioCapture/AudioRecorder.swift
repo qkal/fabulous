@@ -19,11 +19,17 @@ public actor AudioRecorder {
     private let engine = AVAudioEngine()
     private var tapProcessor: TapProcessor?
     private var configChangeObserver: (any NSObjectProtocol)?
-    private let vad: EnergyVAD
+    private var vad: any VoiceActivityDetecting
 
     public private(set) var isRecording = false
 
-    public init(vad: EnergyVAD = EnergyVAD()) {
+    public init(vad: any VoiceActivityDetecting = EnergyVAD()) {
+        self.vad = vad
+    }
+
+    /// Swaps the silence trimmer (e.g. once the Silero model finishes
+    /// installing). Takes effect from the next `stop()`.
+    public func setVAD(_ vad: any VoiceActivityDetecting) {
         self.vad = vad
     }
 

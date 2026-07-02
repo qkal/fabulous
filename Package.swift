@@ -68,5 +68,13 @@ let package = Package(
         .testTarget(name: "HotkeyEngineTests", dependencies: ["HotkeyEngine"]),
         .testTarget(name: "HistoryStoreTests", dependencies: ["HistoryStore"]),
         .testTarget(name: "TranscriptionEngineTests", dependencies: ["TranscriptionEngine"]),
+
+        // Cross-module pipeline test: resample → trim → transcribe (fake)
+        // → post-process → injection strategy. The only place the stage
+        // contracts are exercised together outside the app itself.
+        .testTarget(
+            name: "PipelineTests",
+            dependencies: ["FabCore", "AudioCapture", "TranscriptionEngine", "TextInjector"]
+        ),
     ]
 )

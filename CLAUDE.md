@@ -25,11 +25,14 @@ SwiftPM targets, one directory each under `Sources/`:
   `ModelDescriptor`), `TextPostProcessor` pipeline, `ReplacementDictionary`,
   paths. No AppKit imports.
 - `AudioCapture` — `AudioRecorder` actor (AVAudioEngine tap → 16 kHz mono via
-  `AudioResampler`/`TapProcessor`), `EnergyVAD` silence trimming.
+  `AudioResampler`/`TapProcessor`), silence trimming behind
+  `VoiceActivityDetecting`: `EnergyVAD` default, `SileroVAD` (CoreML)
+  swapped in at runtime once its model is installed.
 - `HotkeyEngine` — `HotkeyMonitor` (@MainActor): CGEventTap primary,
   NSEvent global monitor fallback. `HotkeySpec` = mode + modifier.
 - `TranscriptionEngine` — `TranscriptionBackend` protocol,
-  `WhisperKitBackend` actor, `ModelManager` actor + `ModelLayout`
+  `WhisperKitBackend` actor, `SpeechAnalyzerBackend` actor (macOS 26+,
+  OS-managed assets), `ModelManager` actor + `ModelLayout`
   (install/verify/delete on disk; hub snapshot path shape lives here).
 - `TextInjector` — `StrategySelector` (pure, tested) picks
   axInsert → paste → keystrokes chain; `TextInjector` (@MainActor) executes.
@@ -91,6 +94,24 @@ sees everything. `TranscriptionEngine` is the only target importing WhisperKit.
   error rather than crashing.
 - The hub download client resumes/repairs partial downloads on re-run; a
   model is "installed" only if all `ModelLayout.requiredComponents` exist.
+- **Silero VAD scores digital silence as speech**: the CoreML model returns
+  ~0.76 probability on all-zero chunks. `SileroVAD` has an RMS pre-gate
+  (~0.0005) in front of every prediction — do not remove it. Its model lives
+  at `models/vad/silero_vad.mlmodelc/` (5 files, `SileroVADInstaller` in the
+  app layer), a sibling of the hub-shaped ASR tree, NOT managed by
+  `ModelLayout`.
+- **SpeechAnalyzer assets are OS-owned**: `SpeechAnalyzerBackend.load` goes
+  through `AssetInventory` (reserve locale + install); nothing appears under
+  our models directory or in the Models tab. Keep-warm =
+  `modelRetention: .processLifetime`; transcriber/analyzer are created per
+  utterance (modules are single-use). An engine load failure must revert
+  `settings.transcriptionEngine` to `.whisper` AND explicitly reload Whisper
+  — `onEngineChanged` no-ops outside `.idle`/`.failed`.
+- Real-engine tests are conditional: `FAB_REAL_ASR=1 swift test --filter
+  SpeechAnalyzerBackendTests` runs the actual Apple Speech engine over
+  `say`-synthesized audio; `SileroVADTests` auto-skip unless the VAD model
+  is installed. `Tests/PipelineTests` (capture → decision e2e with a fake
+  backend) always runs.
 
 ## State / roadmap
 
@@ -102,11 +123,15 @@ recording overlay with level meter; transcript history (GRDB, cap 500,
 toggle + clear); phase 3 "trustworthy daily driver" (docs/specs/): stable
 local signing, per-dictation latency metrics in menu + log, sound cues,
 Esc-cancels-recording, injection safety net (clipboard + overlay notice),
-focus-change guard, replacements editor tab.
+focus-change guard, replacements editor tab; phase 4 "faster engine"
+(docs/specs/phase-4-faster-engine.md): SpeechAnalyzer backend behind a
+Settings → General engine toggle (Whisper stays default; pending A/B
+dogfooding before any default switch), Silero VAD with EnergyVAD fallback,
+end-to-end pipeline tests (`Tests/PipelineTests`) + conditional real-engine
+tests.
 
-Not yet built: Silero VAD (phase-3 stretch, slipped), Parakeet/FluidAudio
-backend and streaming transcription (parked pending latency data),
-SpeechAnalyzer backend (macOS 26+), per-app injection override settings UI,
-LLM post-processing (interface exists: `TextPostProcessor`),
-signed/notarized .dmg release pipeline. See docs/architecture.md and
-docs/specs/phase-3-trustworthy-daily-driver.md.
+Not yet built: streaming transcription / partial results UI,
+Parakeet/FluidAudio backend (only if SpeechAnalyzer disappoints), per-app
+injection override settings UI, LLM post-processing (interface exists:
+`TextPostProcessor`), signed/notarized .dmg release pipeline. See
+docs/architecture.md and docs/specs/.

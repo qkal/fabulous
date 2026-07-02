@@ -12,6 +12,7 @@ final class SettingsStore {
     private enum Keys {
         static let hotkeySpec = "hotkeySpec.v2"
         static let selectedModelID = "selectedModelID"
+        static let transcriptionEngine = "transcriptionEngine"
         static let inputDeviceUID = "inputDeviceUID"
         static let historyEnabled = "historyEnabled"
         static let soundCuesEnabled = "soundCuesEnabled"
@@ -21,6 +22,7 @@ final class SettingsStore {
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored var onHotkeyChanged: (() -> Void)?
     @ObservationIgnored var onReplacementsChanged: (() -> Void)?
+    @ObservationIgnored var onEngineChanged: (() -> Void)?
 
     var hotkeySpec: HotkeySpec {
         didSet {
@@ -36,6 +38,16 @@ final class SettingsStore {
     /// owned by the controller; this is only the preference.
     var selectedModelID: String {
         didSet { defaults.set(selectedModelID, forKey: Keys.selectedModelID) }
+    }
+
+    /// Which ASR engine transcribes. Whisper is the default; Apple Speech
+    /// (macOS 26+) is the phase-4 experiment.
+    var transcriptionEngine: TranscriptionEngineKind {
+        didSet {
+            guard transcriptionEngine != oldValue else { return }
+            defaults.set(transcriptionEngine.rawValue, forKey: Keys.transcriptionEngine)
+            onEngineChanged?()
+        }
     }
 
     /// Core Audio device UID; nil = system default input.
@@ -71,6 +83,9 @@ final class SettingsStore {
             ?? .default
         selectedModelID = defaults.string(forKey: Keys.selectedModelID)
             ?? ModelCatalog.recommended.id
+        transcriptionEngine = defaults.string(forKey: Keys.transcriptionEngine)
+            .flatMap(TranscriptionEngineKind.init(rawValue:))
+            ?? .whisper
         inputDeviceUID = defaults.string(forKey: Keys.inputDeviceUID)
         historyEnabled = defaults.object(forKey: Keys.historyEnabled) as? Bool ?? true
         soundCuesEnabled = defaults.object(forKey: Keys.soundCuesEnabled) as? Bool ?? true

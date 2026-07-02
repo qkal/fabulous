@@ -37,6 +37,30 @@ public struct ModelDescriptor: Sendable, Equatable, Codable {
         displayName: "Whisper Large v3 Turbo",
         approximateSizeMB: 1600
     )
+
+    /// Apple's on-device SpeechAnalyzer (macOS 26+). Assets are managed by
+    /// the OS, so this never appears in the download/delete Models UI —
+    /// it exists so history rows and the backend API can name the engine.
+    public static let appleSpeech = ModelDescriptor(
+        id: "apple-speech",
+        displayName: "Apple Speech",
+        approximateSizeMB: 0
+    )
+}
+
+/// Which ASR engine turns audio into text. A user preference; the Whisper
+/// model *variant* remains a separate choice (`ModelCatalog`).
+public enum TranscriptionEngineKind: String, Sendable, Codable, CaseIterable {
+    case whisper
+    /// Apple SpeechAnalyzer — experimental, macOS 26+ only.
+    case appleSpeech = "apple-speech"
+
+    public var displayName: String {
+        switch self {
+        case .whisper: "Whisper"
+        case .appleSpeech: "Apple Speech (experimental)"
+        }
+    }
 }
 
 /// The models fabulous offers in the UI, best first.

@@ -71,10 +71,20 @@ resamples on the audio thread (`TapProcessor` + `AVAudioConverter`) straight
 to 16 kHz mono Float32 and accumulates under a lock — no buffers cross a
 concurrency boundary. Default-device changes (AirPods mid-session) arrive as
 `AVAudioEngineConfigurationChange`; the recorder re-taps with the new format
-and the converter is rebuilt, keeping already-captured samples. `EnergyVAD`
-(frame RMS + padding) trims silence; a Silero VAD can replace it behind the
-same function later. If nothing exceeds the threshold, transcription is
-skipped entirely.
+and the converter is rebuilt, keeping already-captured samples. Silence
+trimming sits behind the `VoiceActivityDetecting` protocol (named to dodge
+WhisperKit's `VoiceActivityDetector` class): `EnergyVAD` (frame RMS +
+padding) is the always-available default, and `SileroVAD` (CoreML, 512-sample
+/ 32 ms chunks, CPU-only) replaces it at runtime once its ~1 MB model is on
+disk — `SileroVADInstaller` (app layer) fetches it from the
+FluidInference/silero-vad-coreml HF repo into
+`…/fabulous/models/vad/silero_vad.mlmodelc/` with the same
+all-components-or-not-installed rule as ASR models. `SileroVAD` keeps an
+RMS pre-gate (~0.0005) in front of the model: the network scores pure
+digital silence as ~0.76 speech probability, so all-zero chunks (including
+the zero-padded final partial chunk) must never reach it. Any prediction
+failure falls back to `EnergyVAD` — trimming must never lose a dictation.
+If no chunk reads as speech, transcription is skipped entirely.
 
 ### TranscriptionEngine
 `TranscriptionBackend` is the seam:
@@ -88,9 +98,22 @@ protocol TranscriptionBackend: Sendable {
 ```
 
 Backends: **WhisperKit** (shipped; `large-v3-turbo` recommended default,
-`small`/`base` for smaller footprints), **Parakeet via FluidAudio**
-(planned; best for 8 GB M1), **Apple SpeechAnalyzer** (planned, macOS 26+
-behind availability check).
+`small`/`base` for smaller footprints), **Apple SpeechAnalyzer** (shipped
+phase 4, experimental, macOS 26+ behind `#available` and a Settings →
+General engine toggle; WhisperKit stays the default), **Parakeet via
+FluidAudio** (parked; only if SpeechAnalyzer disappoints).
+
+`SpeechAnalyzerBackend` differs from WhisperKit in ownership: model assets
+belong to the OS (`AssetInventory` reserve + install on `load`; nothing
+under our models directory, nothing in the Models tab), and keep-warm is
+expressed as `SpeechAnalyzer.Options.modelRetention = .processLifetime`
+rather than holding an object. A transcriber/analyzer pair is created per
+utterance — modules are single-use; the retained model makes that cheap.
+Engine choice is persisted as `TranscriptionEngineKind` in settings; any
+Apple Speech load failure reverts the preference and reloads Whisper so
+dictation never dies. History rows record which engine produced them via
+the existing `modelID` column (`apple-speech`), which is what makes the A/B
+dogfooding comparison decidable.
 
 **Model management** is split from loading: `ModelManager` (actor) owns the
 on-disk lifecycle — download with progress, delete, size accounting —
@@ -210,5 +233,15 @@ loop).
 
 Unit: VAD trimming, resampling (rate/downmix/energy/streaming continuity),
 replacement dictionary, strategy selection — `swift test`, Swift Testing.
-Planned: WAV-fixture integration test asserting expected transcript (needs
-model download; will be gated for CI), overlay/latency instrumentation.
+
+End-to-end (phase 4, `Tests/PipelineTests`): capture-format buffers through
+TapProcessor → VAD → a contract-checking fake `TranscriptionBackend` →
+`ReplacementDictionary` → `StrategySelector`, plus the silent-recording
+short-circuit and secure-input refusal paths. Runs unconditionally in
+`swift test`.
+
+Conditionally-run integration tests (skip cleanly when preconditions
+missing): `SileroVADTests` needs the VAD model installed;
+`SpeechAnalyzerBackendTests` runs the real Apple Speech engine over
+`say`-synthesized audio behind `FAB_REAL_ASR=1` (downloads OS assets, macOS
+26+ only).
