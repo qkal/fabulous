@@ -296,7 +296,10 @@ final class AppController {
         state = .transcribing
         overlay.showTranscribing()
         do {
-            let transcript = try await backend.transcribe(audio, language: nil)
+            let overlay = self.overlay
+            let transcript = try await backend.transcribe(audio, language: nil) { fraction in
+                overlay.updateProgress(fraction)
+            }
             let transcribedAt = clock.now
             let text = try await postProcessor.process(transcript.text)
             let processedAt = clock.now

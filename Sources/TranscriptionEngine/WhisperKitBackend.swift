@@ -48,7 +48,11 @@ public actor WhisperKitBackend: TranscriptionBackend {
 
     public var currentModel: ModelDescriptor? { loadedModel }
 
-    public func transcribe(_ audio: AudioBuffer, language: Language?) async throws -> Transcript {
+    public func transcribe(
+        _ audio: AudioBuffer,
+        language: Language?,
+        onProgress: (@MainActor @Sendable (Double) -> Void)?
+    ) async throws -> Transcript {
         guard let whisperKit else { throw TranscriptionError.modelNotLoaded }
         guard audio.sampleRate == Double(WhisperKit.sampleRate) else {
             throw TranscriptionError.unsupportedSampleRate(audio.sampleRate)
@@ -66,6 +70,26 @@ public actor WhisperKitBackend: TranscriptionBackend {
             // silence rather than truncated.
             chunkingStrategy: .vad
         )
+        // WhisperKit fills its `progress` per decoding window (and swaps in
+        // a fresh Progress after each finished run). Poll it while the
+        // decode runs; this task inherits actor isolation and interleaves
+        // with the awaited transcribe call.
+        var poller: Task<Void, Never>?
+        if let onProgress {
+            poller = Task {
+                while !Task.isCancelled {
+                    if let progress = self.whisperKit?.progress {
+                        let fraction = progress.fractionCompleted
+                        if fraction > 0, fraction < 1 {
+                            await onProgress(fraction)
+                        }
+                    }
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+            }
+        }
+        defer { poller?.cancel() }
+
         let results = try await whisperKit.transcribe(
             audioArray: audio.samples,
             decodeOptions: options

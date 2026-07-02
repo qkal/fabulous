@@ -15,6 +15,8 @@ final class OverlayModel {
     var phase: Phase = .recording
     /// Smoothed input level, 0…1.
     var level: Float = 0
+    /// Transcription decode progress, 0…1.
+    var progress: Double = 0
 }
 
 /// The floating dictation indicator: a borderless, non-activating panel at
@@ -41,7 +43,13 @@ final class OverlayController {
 
     func showTranscribing() {
         model.phase = .transcribing
+        model.progress = 0
         show()
+    }
+
+    func updateProgress(_ fraction: Double) {
+        // Monotonic — a progress readout that moves backwards reads as broken.
+        model.progress = max(model.progress, min(1, fraction))
     }
 
     func updateLevel(_ level: Float) {
@@ -136,16 +144,16 @@ private struct OverlayView: View {
             switch model.phase {
             case .recording:
                 CapsuleChrome {
-                    SiriWave(level: model.level, energetic: true)
-                        .frame(width: 96, height: 26)
+                    PixelMatrixWave(level: model.level)
+                        .frame(width: 88, height: 26)
                 }
             case .transcribing:
                 CapsuleChrome {
-                    HStack(spacing: 8) {
-                        SiriWave(level: 0.25, energetic: false)
-                            .frame(width: 54, height: 18)
-                        Text("Transcribing")
-                            .font(.caption.weight(.medium))
+                    HStack(spacing: 9) {
+                        PixelSpinner()
+                            .frame(width: 20, height: 20)
+                        Text(percentText)
+                            .font(.caption.weight(.medium).monospacedDigit())
                             .foregroundStyle(.white.opacity(0.85))
                     }
                 }
@@ -167,107 +175,126 @@ private struct OverlayView: View {
         .frame(width: 360, height: 72)
         .animation(.easeOut(duration: 0.18), value: model.phase)
     }
+
+    /// Honest about where decoding stands. Shows "…" until the first real
+    /// progress report arrives rather than pretending with a fake number.
+    private var percentText: String {
+        model.progress > 0
+            ? "\(Int((model.progress * 100).rounded()))%"
+            : "…"
+    }
 }
 
-/// The capsule shell: near-black glass with a rim light that *rolls* around
-/// the edge — a bright arc orbiting the capsule, echoed by a blurred halo
-/// behind it, so the whole thing reads as one lit object rather than a
-/// rectangle with a drop shadow.
+/// The capsule shell: near-black glass, a whisper of a rim line, and a
+/// plain soft shadow. The motion lives in the content, not the frame.
 private struct CapsuleChrome<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
-            let t = timeline.date.timeIntervalSinceReferenceDate
-            let sweep = Angle(degrees: (t * 55).truncatingRemainder(dividingBy: 360))
-
-            content
-                .padding(.horizontal, 16)
-                .padding(.vertical, 9)
-                .background {
-                    ZStack {
-                        // The orbiting halo: same arc as the rim light,
-                        // blurred wide, drawn behind the glass.
+        content
+            .padding(.horizontal, 16)
+            .padding(.vertical, 9)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(.black.opacity(0.8))
+                    .overlay(
                         Capsule(style: .continuous)
-                            .stroke(rollingArc(sweep), lineWidth: 7)
-                            .blur(radius: 12)
-                            .opacity(0.8)
-                        Capsule(style: .continuous)
-                            .fill(.black.opacity(0.8))
-                        // The rim light itself: a crisp bright arc chased by
-                        // a long dim tail, orbiting the border.
-                        Capsule(style: .continuous)
-                            .strokeBorder(rollingArc(sweep), lineWidth: 1.2)
-                    }
-                }
-                .shadow(color: .black.opacity(0.4), radius: 9, y: 3)
-        }
-    }
-
-    /// One bright point with a long comet tail, wrapped around the capsule.
-    private func rollingArc(_ angle: Angle) -> AngularGradient {
-        AngularGradient(
-            gradient: Gradient(stops: [
-                .init(color: OverlayStyle.ice.opacity(0.0), location: 0.0),
-                .init(color: OverlayStyle.iceDim.opacity(0.25), location: 0.55),
-                .init(color: OverlayStyle.iceDim.opacity(0.55), location: 0.82),
-                .init(color: OverlayStyle.ice, location: 0.97),
-                .init(color: OverlayStyle.ice.opacity(0.0), location: 1.0),
-            ]),
-            center: .center,
-            angle: angle
-        )
+                            .strokeBorder(.white.opacity(0.14), lineWidth: 1)
+                    )
+            )
+            .shadow(color: .black.opacity(0.4), radius: 9, y: 3)
     }
 }
 
-/// A Siri-inspired waveform: a row of thin gradient bars whose heights ride
-/// travelling sine waves, scaled by the live input level so the wave surges
-/// when you speak and settles to a gentle idle breath when you pause.
-private struct SiriWave: View {
+/// Voice as a retro LED matrix: a grid of discrete square pixels where each
+/// column fills upward from the center in quantized steps. Two travelling
+/// waves drive the column heights, scaled by the live input level — so it
+/// surges when you speak — and the topmost lit pixel of each column burns
+/// brightest, like an equalizer's peak dot.
+private struct PixelMatrixWave: View {
     var level: Float
-    /// Recording waves surge with voice; the transcribing wave just idles.
-    var energetic: Bool
 
-    private static let barCount = 17
+    private static let columns = 15
+    private static let rows = 7 // odd: symmetric around the center row
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
             let t = timeline.date.timeIntervalSinceReferenceDate
             Canvas { context, size in
-                let barWidth: CGFloat = 2.5
-                let gap = (size.width - CGFloat(Self.barCount) * barWidth)
-                    / CGFloat(Self.barCount - 1)
-                let midY = size.height / 2
+                let cols = Self.columns
+                let rows = Self.rows
+                let cell: CGFloat = 2.6
+                let gapX = (size.width - CGFloat(cols) * cell) / CGFloat(cols - 1)
+                let gapY = (size.height - CGFloat(rows) * cell) / CGFloat(rows - 1)
+                let midRow = rows / 2
                 let drive = CGFloat(min(1, max(0, level)))
-                // Idle breath keeps the wave alive between words.
-                let idle: CGFloat = energetic ? 0.12 : 0.3
+                let idle: CGFloat = 0.1
 
-                for index in 0..<Self.barCount {
-                    let x = CGFloat(index) * (barWidth + gap)
-                    let phase = Double(index) * 0.55
-                    // Two travelling waves at different speeds so the motion
-                    // never reads as a loop.
+                for col in 0..<cols {
+                    let phase = Double(col) * 0.6
                     let wave = 0.6 * sin(t * 6.0 + phase)
                         + 0.4 * sin(t * 9.5 - phase * 1.3)
-                    // Center-weighted envelope: middle bars react hardest.
-                    let center = abs(CGFloat(index) - CGFloat(Self.barCount - 1) / 2)
-                        / (CGFloat(Self.barCount - 1) / 2)
+                    let center = abs(CGFloat(col) - CGFloat(cols - 1) / 2)
+                        / (CGFloat(cols - 1) / 2)
                     let envelope = 1.0 - center * center * 0.75
-                    let amplitude = (idle + drive * (energetic ? 0.88 : 0.2))
-                        * envelope * CGFloat(0.5 + 0.5 * abs(wave))
-                    let height = max(barWidth, amplitude * size.height)
+                    let amplitude = (idle + drive * 0.9) * envelope
+                        * CGFloat(0.5 + 0.5 * abs(wave))
+                    // Quantize: how many pixels above/below center light up.
+                    let lit = Int((amplitude * CGFloat(midRow)).rounded())
 
-                    let rect = CGRect(
-                        x: x, y: midY - height / 2,
-                        width: barWidth, height: height
-                    )
-                    let bar = Path(roundedRect: rect, cornerRadius: barWidth / 2)
-                    // Monochrome: taller bars burn brighter, so loudness
-                    // reads as light instead of color.
-                    let heat = amplitude / max(idle + 0.88, 0.01)
+                    for row in 0..<rows {
+                        let distance = abs(row - midRow)
+                        let x = CGFloat(col) * (cell + gapX)
+                        let y = CGFloat(row) * (cell + gapY)
+                        let rect = CGRect(x: x, y: y, width: cell, height: cell)
+
+                        let opacity: CGFloat = if distance == 0 {
+                            0.95 // center row always alive
+                        } else if distance < lit {
+                            0.55
+                        } else if distance == lit {
+                            1.0 // the peak pixel burns brightest
+                        } else {
+                            0.1 // unlit grid stays faintly visible
+                        }
+                        context.fill(
+                            Path(rect),
+                            with: .color(OverlayStyle.ice.opacity(opacity))
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// A pixel-ring spinner: twelve square pixels in a circle, lit as a comet
+/// that steps around the ring in discrete ticks — deliberately quantized,
+/// matching the recording matrix.
+private struct PixelSpinner: View {
+    private static let pixels = 12
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 20.0)) { timeline in
+            let t = timeline.date.timeIntervalSinceReferenceDate
+            Canvas { context, size in
+                let count = Self.pixels
+                let cell: CGFloat = 2.8
+                let radius = min(size.width, size.height) / 2 - cell
+                let mid = CGPoint(x: size.width / 2, y: size.height / 2)
+                // Discrete ticks, not smooth rotation — pixels don't glide.
+                let head = Int(t * 12) % count
+
+                for index in 0..<count {
+                    let angle = Double(index) / Double(count) * 2 * .pi - .pi / 2
+                    let x = mid.x + cos(angle) * radius - cell / 2
+                    let y = mid.y + sin(angle) * radius - cell / 2
+                    // Comet tail: brightness falls off behind the head.
+                    let lag = (head - index + count) % count
+                    let opacity = max(0.08, 1.0 - Double(lag) * 0.16)
                     context.fill(
-                        bar,
-                        with: .color(OverlayStyle.ice.opacity(0.45 + 0.55 * min(1, heat)))
+                        Path(CGRect(x: x, y: y, width: cell, height: cell)),
+                        with: .color(OverlayStyle.ice.opacity(opacity))
                     )
                 }
             }
