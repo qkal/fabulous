@@ -14,33 +14,75 @@ struct SettingsActions {
     var clearHistory: () -> Void
 }
 
+/// Sidebar sections of the settings window — a real, resizable app window
+/// with navigation, not a popup.
+enum SettingsSection: String, CaseIterable, Identifiable {
+    case general, models, replacements, history
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .general: "General"
+        case .models: "Models"
+        case .replacements: "Replacements"
+        case .history: "History"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .general: "gearshape"
+        case .models: "brain"
+        case .replacements: "character.cursor.ibeam"
+        case .history: "clock.arrow.circlepath"
+        }
+    }
+}
+
 struct SettingsRootView: View {
     @Bindable var store: SettingsStore
     let models: ModelListModel
     let connectivity: ConnectivityMonitor
     let actions: SettingsActions
 
+    @State private var section: SettingsSection = .general
+
     var body: some View {
-        TabView {
-            GeneralSettingsTab(store: store, actions: actions)
-                .tabItem { Label("General", systemImage: "gearshape") }
-            ModelsSettingsTab(
+        NavigationSplitView {
+            List(SettingsSection.allCases, selection: $section) { item in
+                Label(item.title, systemImage: item.symbol)
+                    .tag(item)
+            }
+            .navigationSplitViewColumnWidth(min: 170, ideal: 190, max: 240)
+        } detail: {
+            detailView
+                .navigationTitle(section.title)
+        }
+        .frame(minWidth: 640, minHeight: 420)
+    }
+
+    @ViewBuilder
+    private var detailView: some View {
+        switch section {
+        case .general:
+            GeneralSettingsPane(store: store, actions: actions)
+        case .models:
+            ModelsSettingsPane(
                 store: store, models: models,
                 connectivity: connectivity, actions: actions
             )
-            .tabItem { Label("Models", systemImage: "brain") }
-            ReplacementsSettingsTab(store: store)
-                .tabItem { Label("Replacements", systemImage: "character.cursor.ibeam") }
-            HistorySettingsTab(store: store, actions: actions)
-                .tabItem { Label("History", systemImage: "clock.arrow.circlepath") }
+        case .replacements:
+            ReplacementsSettingsPane(store: store)
+        case .history:
+            HistorySettingsPane(store: store, actions: actions)
         }
-        .frame(width: 540)
     }
 }
 
 // MARK: - General
 
-private struct GeneralSettingsTab: View {
+private struct GeneralSettingsPane: View {
     @Bindable var store: SettingsStore
     let actions: SettingsActions
 
@@ -135,7 +177,7 @@ private struct GeneralSettingsTab: View {
 
 // MARK: - Models
 
-private struct ModelsSettingsTab: View {
+private struct ModelsSettingsPane: View {
     @Bindable var store: SettingsStore
     let models: ModelListModel
     let connectivity: ConnectivityMonitor
@@ -242,7 +284,7 @@ private struct ModelRow: View {
 
 // MARK: - Replacements
 
-private struct ReplacementsSettingsTab: View {
+private struct ReplacementsSettingsPane: View {
     @Bindable var store: SettingsStore
 
     @State private var newPattern = ""
@@ -308,7 +350,7 @@ private struct ReplacementsSettingsTab: View {
 
 // MARK: - History
 
-private struct HistorySettingsTab: View {
+private struct HistorySettingsPane: View {
     @Bindable var store: SettingsStore
     let actions: SettingsActions
 

@@ -72,30 +72,38 @@ final class StatusItemController {
     }
 
     func update(for state: AppController.State, hotkeyName: String) {
-        let (symbol, description, stateText): (String, String, String) = switch state {
+        // Waveform is the app's identity in the menu bar — distinctive next
+        // to a row of generic glyphs, and it *is* what the app does. Each
+        // symbol carries a fallback in case the badge variant is missing.
+        let (symbol, fallback, description, stateText): (String, String, String, String) = switch state {
         case .needsPermissions:
-            ("mic.slash", "fabulous — needs permissions", "Waiting for permissions")
+            ("waveform.badge.exclamationmark", "mic.slash",
+             "fabulous — needs permissions", "Waiting for permissions")
         case let .loadingModel(progress):
             (
-                "arrow.down.circle.dotted",
+                "arrow.down.circle.dotted", "arrow.down.circle",
                 "fabulous — loading model",
                 progress.map {
                     "Downloading model… \($0.formatted(.percent.precision(.fractionLength(0))))"
                 } ?? "Loading model…"
             )
         case .idle:
-            ("mic", "fabulous — ready", "Ready")
+            ("waveform.badge.microphone", "waveform",
+             "fabulous — ready", "Ready")
         case .recording:
-            ("waveform.circle.fill", "fabulous — recording", "Recording…")
+            ("waveform", "waveform.circle.fill",
+             "fabulous — recording", "Recording…")
         case .transcribing:
-            ("ellipsis.circle", "fabulous — transcribing", "Transcribing…")
+            ("waveform.badge.magnifyingglass", "ellipsis.circle",
+             "fabulous — transcribing", "Transcribing…")
         case let .failed(message):
-            ("exclamationmark.triangle", "fabulous — error", message)
+            ("exclamationmark.triangle", "exclamationmark.triangle",
+             "fabulous — error", message)
         }
 
         statusItem?.button?.image = NSImage(
             systemSymbolName: symbol, accessibilityDescription: description
-        )
+        ) ?? NSImage(systemSymbolName: fallback, accessibilityDescription: description)
         stateItem.title = stateText
         hintItem.title = "Hold \(hotkeyName) to dictate"
     }
