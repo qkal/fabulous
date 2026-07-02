@@ -133,7 +133,6 @@ final class OverlayController {
 /// cold cast, on black glass. The color comes from light, not from hue.
 private enum OverlayStyle {
     static let ice = Color(red: 0.88, green: 0.93, blue: 1.0)
-    static let iceDim = Color(red: 0.62, green: 0.68, blue: 0.78)
 }
 
 private struct OverlayView: View {
@@ -241,10 +240,10 @@ private struct PixelMatrixWave: View {
                         * CGFloat(0.5 + 0.5 * abs(wave))
                     // Quantize: how many pixels above/below center light up.
                     let lit = Int((amplitude * CGFloat(midRow)).rounded())
+                    let x = CGFloat(col) * (cell + gapX)
 
                     for row in 0..<rows {
                         let distance = abs(row - midRow)
-                        let x = CGFloat(col) * (cell + gapX)
                         let y = CGFloat(row) * (cell + gapY)
                         let rect = CGRect(x: x, y: y, width: cell, height: cell)
 

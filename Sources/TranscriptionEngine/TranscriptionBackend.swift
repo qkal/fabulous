@@ -12,12 +12,14 @@ public protocol TranscriptionBackend: Sendable {
     func load(model: ModelDescriptor) async throws
 
     /// Transcribes 16 kHz mono Float32 audio. `language: nil` means
-    /// auto-detect. `onProgress` receives decode fractions (0…1) on the
-    /// main actor while transcription runs, for progress UI.
+    /// auto-detect. `onProgress` receives strictly increasing decode
+    /// fractions (0…1) while transcription runs, for progress UI. It may
+    /// be called from any executor; hop to the main actor at the call site
+    /// (same contract as `ModelManager.download`).
     func transcribe(
         _ audio: AudioBuffer,
         language: Language?,
-        onProgress: (@MainActor @Sendable (Double) -> Void)?
+        onProgress: (@Sendable (Double) -> Void)?
     ) async throws -> Transcript
 
     /// Releases the loaded model (for the idle-unload memory policy).

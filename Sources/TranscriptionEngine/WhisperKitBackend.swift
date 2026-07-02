@@ -51,7 +51,7 @@ public actor WhisperKitBackend: TranscriptionBackend {
     public func transcribe(
         _ audio: AudioBuffer,
         language: Language?,
-        onProgress: (@MainActor @Sendable (Double) -> Void)?
+        onProgress: (@Sendable (Double) -> Void)?
     ) async throws -> Transcript {
         guard let whisperKit else { throw TranscriptionError.modelNotLoaded }
         guard audio.sampleRate == Double(WhisperKit.sampleRate) else {
@@ -77,12 +77,16 @@ public actor WhisperKitBackend: TranscriptionBackend {
         var poller: Task<Void, Never>?
         if let onProgress {
             poller = Task {
+                // Forward only fresh forward movement: re-reporting an
+                // unchanged fraction would invalidate the progress UI for
+                // no visible change, and a stale Progress from the previous
+                // run reads 1.0 (filtered by `< 1`).
+                var lastReported: Double = 0
                 while !Task.isCancelled {
-                    if let progress = self.whisperKit?.progress {
-                        let fraction = progress.fractionCompleted
-                        if fraction > 0, fraction < 1 {
-                            await onProgress(fraction)
-                        }
+                    if let fraction = self.whisperKit?.progress.fractionCompleted,
+                       fraction > lastReported, fraction < 1 {
+                        lastReported = fraction
+                        onProgress(fraction)
                     }
                     try? await Task.sleep(for: .milliseconds(100))
                 }
