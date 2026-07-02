@@ -121,19 +121,11 @@ final class OverlayController {
 
 // MARK: - Views
 
-/// Shared palette: the Siri-ish cool gradient used by the wave, the glow,
-/// and the capsule's rim light.
+/// Shared palette: near-monochrome ice — silver-white with the faintest
+/// cold cast, on black glass. The color comes from light, not from hue.
 private enum OverlayStyle {
-    static let gradient = LinearGradient(
-        colors: [
-            Color(red: 0.35, green: 0.62, blue: 1.0),
-            Color(red: 0.62, green: 0.45, blue: 1.0),
-            Color(red: 0.95, green: 0.40, blue: 0.78),
-        ],
-        startPoint: .leading,
-        endPoint: .trailing
-    )
-    static let glow = Color(red: 0.55, green: 0.5, blue: 1.0)
+    static let ice = Color(red: 0.88, green: 0.93, blue: 1.0)
+    static let iceDim = Color(red: 0.62, green: 0.68, blue: 0.78)
 }
 
 private struct OverlayView: View {
@@ -177,25 +169,54 @@ private struct OverlayView: View {
     }
 }
 
-/// The capsule shell: near-black glass, a faint gradient rim light, and a
-/// soft colored glow instead of a hard window shadow.
+/// The capsule shell: near-black glass with a rim light that *rolls* around
+/// the edge — a bright arc orbiting the capsule, echoed by a blurred halo
+/// behind it, so the whole thing reads as one lit object rather than a
+/// rectangle with a drop shadow.
 private struct CapsuleChrome<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
-        content
-            .padding(.horizontal, 16)
-            .padding(.vertical, 9)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(.black.opacity(0.78))
-                    .overlay(
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+            let t = timeline.date.timeIntervalSinceReferenceDate
+            let sweep = Angle(degrees: (t * 55).truncatingRemainder(dividingBy: 360))
+
+            content
+                .padding(.horizontal, 16)
+                .padding(.vertical, 9)
+                .background {
+                    ZStack {
+                        // The orbiting halo: same arc as the rim light,
+                        // blurred wide, drawn behind the glass.
                         Capsule(style: .continuous)
-                            .strokeBorder(OverlayStyle.gradient.opacity(0.55), lineWidth: 1)
-                    )
-            )
-            .shadow(color: OverlayStyle.glow.opacity(0.35), radius: 14, y: 2)
-            .shadow(color: .black.opacity(0.35), radius: 8, y: 3)
+                            .stroke(rollingArc(sweep), lineWidth: 7)
+                            .blur(radius: 12)
+                            .opacity(0.8)
+                        Capsule(style: .continuous)
+                            .fill(.black.opacity(0.8))
+                        // The rim light itself: a crisp bright arc chased by
+                        // a long dim tail, orbiting the border.
+                        Capsule(style: .continuous)
+                            .strokeBorder(rollingArc(sweep), lineWidth: 1.2)
+                    }
+                }
+                .shadow(color: .black.opacity(0.4), radius: 9, y: 3)
+        }
+    }
+
+    /// One bright point with a long comet tail, wrapped around the capsule.
+    private func rollingArc(_ angle: Angle) -> AngularGradient {
+        AngularGradient(
+            gradient: Gradient(stops: [
+                .init(color: OverlayStyle.ice.opacity(0.0), location: 0.0),
+                .init(color: OverlayStyle.iceDim.opacity(0.25), location: 0.55),
+                .init(color: OverlayStyle.iceDim.opacity(0.55), location: 0.82),
+                .init(color: OverlayStyle.ice, location: 0.97),
+                .init(color: OverlayStyle.ice.opacity(0.0), location: 1.0),
+            ]),
+            center: .center,
+            angle: angle
+        )
     }
 }
 
@@ -241,17 +262,12 @@ private struct SiriWave: View {
                         width: barWidth, height: height
                     )
                     let bar = Path(roundedRect: rect, cornerRadius: barWidth / 2)
+                    // Monochrome: taller bars burn brighter, so loudness
+                    // reads as light instead of color.
+                    let heat = amplitude / max(idle + 0.88, 0.01)
                     context.fill(
                         bar,
-                        with: .linearGradient(
-                            Gradient(colors: [
-                                Color(red: 0.35, green: 0.62, blue: 1.0),
-                                Color(red: 0.62, green: 0.45, blue: 1.0),
-                                Color(red: 0.95, green: 0.40, blue: 0.78),
-                            ]),
-                            startPoint: CGPoint(x: 0, y: midY),
-                            endPoint: CGPoint(x: size.width, y: midY)
-                        )
+                        with: .color(OverlayStyle.ice.opacity(0.45 + 0.55 * min(1, heat)))
                     )
                 }
             }
