@@ -27,6 +27,12 @@ menu surfacing, session prewarm at record-start.
 Out: prompt changes, latency budget enforcement, timeout counters / failure-
 reason columns / debug panel (add only if dogfood data demands them).
 
+Accepted gap: a whole-utterance "scratch that" (cleanup legitimately empties
+the transcript) exits at the existing empty-text guard before metrics are
+recorded, so no row is written for it. Persisting one would pollute engine
+latency percentiles with non-delivered dictations (no delivery stage, no
+meaningful total). Rare path; revisit only if dogfood shows it matters.
+
 ## Design
 
 ### 1. Metrics model (FabCore)
