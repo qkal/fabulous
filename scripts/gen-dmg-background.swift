@@ -50,6 +50,13 @@ arrow.draw(
 
 NSGraphicsContext.restoreGraphicsState()
 
+// Finder renders dmg backgrounds at the image's metadata (point) size, not
+// its pixel size. Without this, a 1200x800 px @72 DPI image would be
+// stretched to 1200x800 pt in the 600x400 pt dmg window. Setting the point
+// size to match the window (600x400) encodes 144 DPI into the PNG so it
+// renders at the intended @2x scale.
+bitmap.size = NSSize(width: 600, height: 400)
+
 guard let png = bitmap.representation(using: .png, properties: [:])
 else { fatalError("png encode failed") }
 try png.write(to: URL(fileURLWithPath: "Support/dmg-background@2x.png"))
