@@ -1,11 +1,26 @@
 import FabCore
 import Foundation
 
+/// What the cleanup stage produced and what it did — the outcome feeds
+/// DictationMetrics so fallbacks are distinguishable from no-ops.
+public struct CleanupReport: Sendable, Equatable {
+    public let text: String
+    public let outcome: LLMCleanupOutcome
+
+    public init(text: String, outcome: LLMCleanupOutcome) {
+        self.text = text
+        self.outcome = outcome
+    }
+}
+
 /// A post-processor whose prompt depends on per-dictation context
 /// (the injection target app). AppController sets the context right
 /// before running the pipeline.
 public protocol ContextualTextPostProcessor: TextPostProcessor {
     func setAppContext(name: String?) async
+    /// Non-throwing cleanup with outcome reporting. Implementations must
+    /// uphold the invariant: every failure returns the input text.
+    func cleanup(_ text: String) async -> CleanupReport
 }
 
 /// Seam over the language model so fallback behavior is testable
@@ -37,7 +52,13 @@ public actor FoundationModelPostProcessor: ContextualTextPostProcessor {
     }
 
     public func process(_ text: String) async throws -> String {
-        guard !text.isEmpty else { return text }
+        await cleanup(text).text
+    }
+
+    public func cleanup(_ text: String) async -> CleanupReport {
+        guard !text.isEmpty else {
+            return CleanupReport(text: text, outcome: .unchanged)
+        }
         let instructions = CleanupPromptBuilder.instructions(
             vocabulary: vocabulary, appName: appName
         )
@@ -49,12 +70,18 @@ public actor FoundationModelPostProcessor: ContextualTextPostProcessor {
             if trimmed.isEmpty {
                 // "blah blah scratch that" legitimately cleans to nothing;
                 // empty output on anything else is a model failure.
-                return Self.endsWithScratchThat(text) ? "" : text
+                return Self.endsWithScratchThat(text)
+                    ? CleanupReport(text: "", outcome: .changed)
+                    : CleanupReport(text: text, outcome: .fellBack)
             }
-            return Self.strippingEdgeSpaces(cleaned)
+            let stripped = Self.strippingEdgeSpaces(cleaned)
+            return CleanupReport(
+                text: stripped,
+                outcome: stripped == text ? .unchanged : .changed
+            )
         } catch {
             NSLog("fabulous: LLM cleanup failed, using raw transcript: \(error)")
-            return text
+            return CleanupReport(text: text, outcome: .fellBack)
         }
     }
 

@@ -87,4 +87,55 @@ struct FoundationModelPostProcessorTests {
         #expect(!FoundationModelPostProcessor.endsWithScratchThat("hello world"))
         #expect(!FoundationModelPostProcessor.endsWithScratchThat("scratch that section off the list"))
     }
+
+    // MARK: - CleanupReport outcomes
+
+    @Test func reportChangedWhenModelRewrites() async {
+        let p = processor(.reply("Ship it."))
+        let report = await p.cleanup("um ship it")
+        #expect(report == CleanupReport(text: "Ship it.", outcome: .changed))
+    }
+
+    @Test func reportUnchangedWhenModelEchoes() async {
+        let p = processor(.reply("um ship it"))
+        let report = await p.cleanup("um ship it")
+        #expect(report == CleanupReport(text: "um ship it", outcome: .unchanged))
+    }
+
+    @Test func reportUnchangedComparesAfterEdgeStrip() async {
+        // Model echoed with stray edge spaces: text is stripped, still a no-op.
+        let p = processor(.reply("  um ship it "))
+        let report = await p.cleanup("um ship it")
+        #expect(report == CleanupReport(text: "um ship it", outcome: .unchanged))
+    }
+
+    @Test func reportFellBackOnError() async {
+        let p = processor(.fail)
+        let report = await p.cleanup("um ship it")
+        #expect(report == CleanupReport(text: "um ship it", outcome: .fellBack))
+    }
+
+    @Test func reportFellBackOnTimeout() async {
+        let p = processor(.hang, timeout: .milliseconds(50))
+        let report = await p.cleanup("um ship it")
+        #expect(report == CleanupReport(text: "um ship it", outcome: .fellBack))
+    }
+
+    @Test func reportFellBackOnRejectedEmptyOutput() async {
+        let p = processor(.reply("  \n"))
+        let report = await p.cleanup("hello world")
+        #expect(report == CleanupReport(text: "hello world", outcome: .fellBack))
+    }
+
+    @Test func reportChangedOnLegitimateScratchToEmpty() async {
+        let p = processor(.reply(""))
+        let report = await p.cleanup("blah blah scratch that")
+        #expect(report == CleanupReport(text: "", outcome: .changed))
+    }
+
+    @Test func reportUnchangedOnEmptyInput() async {
+        let p = processor(.fail) // would throw if the model were called
+        let report = await p.cleanup("")
+        #expect(report == CleanupReport(text: "", outcome: .unchanged))
+    }
 }
