@@ -190,11 +190,15 @@ the newest 500 rows per engine, shown as a second menu line and refreshed
 on every dictation and engine switch.
 
 ### Post-processing (v1.5 interface, shipped now)
-`TextPostProcessor` — `process(String) async throws -> String`. Shipped:
-`PassthroughPostProcessor`, `PostProcessingPipeline`,
-`ReplacementDictionary` (word-boundary-safe via lookarounds, case-insensitive
-by default). The local-LLM cleanup pass slots in as another stage; nothing
-upstream changes.
+`TextPostProcessor` — `process(String) async throws -> String`. Two-stage
+pipeline: optional contextual LLM cleanup (Apple Foundation Models, macOS 26,
+opt-in) via `FoundationModelPostProcessor` removing fillers/punctuation/ASR
+errors and interpreting spoken commands, followed by deterministic
+`ReplacementDictionary` (word-boundary-safe via lookarounds,
+case-insensitive by default) that always wins. Shipped:
+`PassthroughPostProcessor`, `PostProcessingPipeline`, and both stages;
+LLM failures (timeout, guardrail, empty output) fall back to raw text
+except intentional scratch-that deletions.
 
 ## Concurrency model (Swift 6 strict, zero warnings)
 

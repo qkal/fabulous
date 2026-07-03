@@ -39,6 +39,9 @@ SwiftPM targets, one directory each under `Sources/`:
   axInsert → paste → keystrokes chain; `TextInjector` (@MainActor) executes.
 - `HistoryStore` — GRDB/SQLite transcript history (`TranscriptEntry`),
   cap-pruned on insert; only module importing GRDB.
+- `PostProcessing` — LLM transcript cleanup: `FoundationModelPostProcessor`
+  actor (Apple Foundation Models, macOS 26), `CleanupPromptBuilder` (pure),
+  `PostProcessingAvailability`; only target importing FoundationModels.
 - `FabulousApp` — executable: `AppController` state machine, status item,
   settings window (General/Models/History tabs), hotkey recorder
   (`KeyCaptureSession`), overlay pill (`OverlayController`), onboarding,
@@ -123,6 +126,15 @@ sees everything. `TranscriptionEngine` is the only target importing WhisperKit.
   untrimmed buffer — `StreamingDictation.finalTranscript` is the seam. The
   streaming path stops the recorder with `trimming: false`; do not "fix"
   that back to a trimmed stop.
+- **LLM cleanup can only improve or no-op, never lose text**: every failure
+  path in `FoundationModelPostProcessor` (throw, timeout, guardrail refusal,
+  empty output) returns the raw transcript. Empty output is accepted only
+  when the raw text contains "scratch that" — a whole-utterance scratch
+  legitimately cleans to nothing. Fresh `LanguageModelSession` per dictation
+  — session reuse accumulates context and leaks text across dictations.
+- **Keystroke strategy can't type `\n`** via `keyboardSetUnicodeString`;
+  `KeystrokeSegmenter` splits text and posts real Return key events between
+  runs. Don't collapse that back into a single unicode-string post.
 
 ## State / roadmap
 
@@ -149,9 +161,12 @@ tokens, frosted paper pill, paper settings/onboarding, theme switcher (Paper/Gla
 CI + dmg releases (docs/specs/ci-dmg-release.md): GitHub Actions
 build+test on push/PR (macos-26, pinned), tag push v* → unsigned dmg
 attached to GitHub Release (create-dmg, version stamped from tag;
-Info.plist stays 0.0.0-dev in git).
+Info.plist stays 0.0.0-dev in git); LLM post-processing
+(docs/specs/llm-post-processing.md): opt-in on-device cleanup via Apple
+Foundation Models — fillers, punctuation, spoken commands (new line/paragraph,
+scratch that, quote…unquote), vocabulary bias, app-name hint; raw transcript
+kept in history (`rawText`) when cleanup changed it.
 
 Not yet built: Parakeet/FluidAudio backend (only if SpeechAnalyzer
-disappoints), per-app injection override settings UI, LLM post-processing
-(interface exists: `TextPostProcessor`). See docs/architecture.md and
-docs/specs/.
+disappoints), per-app injection override settings UI. See docs/architecture.md
+and docs/specs/.
