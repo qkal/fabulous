@@ -25,8 +25,9 @@ actually fails. No strategy-chain or AX changes until that data exists.
 
 ## Scope
 
-In: async clipboard restore in `TextInjector`, per-dictation winning
-strategy in `DictationMetrics`, persistence, menu surfacing.
+In: async clipboard restore in `TextInjector`, per-dictation delivery
+method (winning strategy or safety net) in `DictationMetrics`,
+persistence, menu surfacing.
 
 Out: shrinking the 50 ms pre-⌘V settle (dropped pastes are worse than
 50 ms; revisit with data), axInsert failure investigation, strategy-chain
@@ -51,6 +52,10 @@ restore moves to a stored task:
   restore, and the clipboard keeps the newest content — same class of
   quirk the synchronous code has (a user copy inside the window wins);
   no transcript is ever lost.
+- Accepted quirk: quitting the app inside the 300 ms window also skips
+  the restore (the task dies with the process). Negligible — the old
+  code merely shrank that window to zero, and the clipboard holds the
+  transcript, not garbage.
 
 The pre-⌘V path is unchanged: save clipboard, write transcript, 50 ms
 settle, post ⌘V. Failure to post still restores synchronously and
@@ -60,29 +65,44 @@ Effect on metrics: `delivery` now ends when the text appears (⌘V posted),
 not after bookkeeping. Expected paste delivery ~370 ms → ~60 ms, with no
 behavior change visible to the target app.
 
-### 2. Strategy in metrics (FabCore + FabulousApp)
+### 2. Delivery method in metrics (FabCore + FabulousApp)
 
-`InjectionStrategy` moves from `TextInjector` to `FabCore` unchanged
-(String-backed pure value enum — FabCore's charter, same precedent as
-`LLMCleanupOutcome`). `TextInjector` already depends on FabCore; only
-import lines change elsewhere.
+FabCore gains the metrics vocabulary (same precedent as
+`LLMCleanupOutcome`):
 
-`DictationMetrics` gains:
+```swift
+public enum DeliveryMethod: String, Sendable, Codable, Equatable {
+    case axInsert, paste, keystrokes  // raw values match InjectionStrategy
+    case safetyNet                    // clipboard fallback, any reason
+}
+```
 
-- `strategy: InjectionStrategy?` — the strategy that delivered the text;
-  `nil` when delivery went through the safety net (focus change, secure
-  input, accessibility revoked, all strategies failed).
+`InjectionStrategy` stays in `TextInjector` — no module churn; the two
+vocabularies are decoupled on purpose (one is "how to inject", the other
+is "how the text got delivered"). AppController maps the winner via
+`DeliveryMethod(rawValue: strategy.rawValue)`.
 
-`AppController.deliver` returns the winning strategy (`inject()` already
-returns it — today discarded) or `nil` on any safety-net path;
-`finishRecording` threads it into the metrics row. `logLine` appends
-` via=paste` when strategy is non-nil, ` via=safetyNet` otherwise.
+A distinct `safetyNet` case — rather than `nil` — matters because the
+safety-net rate is precisely the failure signal this telemetry exists to
+catch; folding it into NULL would make it indistinguishable from
+pre-migration rows.
+
+`DictationMetrics` gains `delivery method`:
+
+- `deliveryMethod: DeliveryMethod` — non-optional; every delivered
+  dictation has one (focus change, secure input, accessibility revoked,
+  and all-strategies-failed are all `.safetyNet`).
+
+`AppController.deliver` returns the method (`inject()` already returns
+the winning strategy — today discarded); `finishRecording` threads it
+into the metrics row. `logLine` appends ` via=paste` / ` via=safetyNet`.
 
 ### 3. Persistence (HistoryStore)
 
-Migration `v6-metrics-strategy` on `dictationMetrics`:
+Migration `v6-metrics-delivery-method` on `dictationMetrics`:
 
-- `strategy TEXT` (nullable; `NULL` = safety net **or** pre-migration row)
+- `deliveryMethod TEXT` (nullable in SQL; `NULL` = pre-migration row
+  only — every new row writes a non-NULL value)
 
 Same lifecycle as existing metrics columns: numbers/labels only,
 independent of the history toggle, survives Clear History, cap-pruned
@@ -91,21 +111,22 @@ with the table.
 ### 4. Menu (FabulousApp)
 
 One line beside the existing per-engine ASR and cleanup stats, computed
-from the newest 500 rows where `strategy IS NOT NULL`:
+from the newest 500 rows where `deliveryMethod IS NOT NULL`:
 
 ```
-Inject ax 62% 8 ms · paste 30% 58 ms · keys 8% 0.2 s
+Inject ax 60% 8 ms · paste 29% 58 ms · keys 8% 0.2 s · net 3%
 ```
 
-Per strategy: share of dictations + delivery p50. Strategies with zero
-rows are omitted; the whole line hides when no qualifying rows exist.
-Restricting to `strategy IS NOT NULL` also keeps pre-change rows (whose
-`deliveryMs` includes the old 300 ms restore wait) out of the
-percentiles — only post-change measurements mix.
+Per method: share of dictations + delivery p50 (`safetyNet` shows share
+only — its "delivery" is a clipboard write, not comparable). Methods with
+zero rows are omitted; the whole line hides when no qualifying rows
+exist. Restricting to `deliveryMethod IS NOT NULL` also keeps
+pre-change rows (whose `deliveryMs` includes the old 300 ms restore
+wait) out of the percentiles — only post-change measurements mix.
 
-Plumbing mirrors `cleanupStats`: `HistoryStore.strategyStats(limit: 500)`
-returns per-strategy count + p50 `deliveryMs`;
-`StatusItemController.setStrategyStats(String?)` (nil hides). Refreshed at
+Plumbing mirrors `cleanupStats`: `HistoryStore.deliveryStats(limit: 500)`
+returns per-method count + p50 `deliveryMs`;
+`StatusItemController.setDeliveryStats(String?)` (nil hides). Refreshed at
 the same points as the other stats lines: after `persistMetrics` and in
 `refreshLatencyStats`.
 
@@ -119,14 +140,17 @@ invisible.
 ## Testing
 
 - `StrategySelector` tests unchanged (pure logic untouched).
-- `DictationMetrics`: `logLine` via-segment; strategy round-trip.
-- HistoryStore: `v6` migration + roundtrip of nullable `strategy`;
-  `strategyStats` percentile/share math including NULL exclusion.
-- Menu formatting: share + p50 string, omission of empty strategies,
-  hidden when no rows.
+- `DeliveryMethod`: mapping from every `InjectionStrategy` case (raw
+  values stay aligned — a case rename in either enum fails this test).
+- `DictationMetrics`: `logLine` via-segment; deliveryMethod round-trip.
+- HistoryStore: `v6` migration + roundtrip of `deliveryMethod`;
+  `deliveryStats` percentile/share math including NULL (pre-migration
+  row) exclusion.
+- Menu formatting: share + p50 string, safetyNet share-only rendering,
+  omission of empty methods, hidden when no rows.
 - PipelineTests are untouched: they end at the `StrategySelector`
   decision and never reach `deliver`/metrics. The deliver → metrics
-  threading (non-nil strategy on injection, nil on safety net) has no
+  threading (strategy on injection, `.safetyNet` on fallback) has no
   fake-injector seam today; it is verified in dogfood via the new
   `via=` segment in the log line rather than by adding a seam for one
   assertion.
@@ -138,6 +162,7 @@ invisible.
 ## Success criteria
 
 Paste-path delivery p50 drops from ~370 ms to well under 100 ms in the
-menu stats. After a week of dogfood: strategy share per the menu line
-answers whether axInsert fails in editors/browsers — and therefore whether
-an AX investigation or per-app overrides are the next latency work.
+menu stats. After a week of dogfood: method share per the menu line
+answers whether axInsert fails in editors/browsers — and the safety-net
+rate is visible for the first time — so the next latency work (AX
+investigation, per-app overrides, or nothing) is decided from data.
