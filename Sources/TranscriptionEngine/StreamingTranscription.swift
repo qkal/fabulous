@@ -11,7 +11,9 @@ public protocol StreamingSession: Sendable {
     func feed(_ samples: [Float]) async
 
     /// Best transcript so far (finalized pieces + volatile tail), a fresh
-    /// full string per update. Finishes when the session ends.
+    /// full string per update. Finishes when the session ends. Single
+    /// consumer only — `AsyncStream` does not fan out; a second `for await`
+    /// loop silently starves the first.
     var partials: AsyncStream<String> { get }
 
     /// Signals end of audio and waits for the final decode.

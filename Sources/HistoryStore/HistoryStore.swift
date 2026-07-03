@@ -46,6 +46,9 @@ public struct MetricsEntry: Codable, Sendable, Equatable, Identifiable,
     public var createdAt: Date
     /// Which engine produced the dictation (`large-v3_turbo`, `apple-speech`, …).
     public var engineID: String
+    /// Duration of the transcribed audio. Streamed rows record the raw fed
+    /// duration; batch rows record the VAD-trimmed duration — a small
+    /// systematic skew to keep in mind when comparing engines by this column.
     public var audioSeconds: Double
     public var stopTrimMs: Double
     public var asrMs: Double

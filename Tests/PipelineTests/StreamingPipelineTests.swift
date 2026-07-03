@@ -50,6 +50,10 @@ import Testing
         let session = FakeSession(
             finishResult: .success(Transcript(text: "streamed text", audioDuration: 1))
         )
+        // Safe: finalTranscript never runs the fallback when finish()
+        // succeeds, so this flag has exactly one potential writer and no
+        // concurrent access — the unsafe opt-out is for the @Sendable
+        // closure's benefit only.
         nonisolated(unsafe) var batchRan = false
         let (transcript, streamed) = try await StreamingDictation.finalTranscript(
             session: session,

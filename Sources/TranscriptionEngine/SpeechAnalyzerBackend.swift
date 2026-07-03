@@ -279,7 +279,7 @@ actor SpeechAnalyzerStreamingSession: StreamingSession {
     }
 
     func finish() async throws -> Transcript {
-        guard !ended else { throw TranscriptionError.modelNotLoaded }
+        guard !ended else { throw SpeechAnalyzerBackendError.sessionAlreadyEnded }
         ended = true
         input.finish()
         do {
@@ -319,6 +319,8 @@ public enum SpeechAnalyzerBackendError: Error, Sendable {
     /// No SpeechTranscriber locale matches the user's locale.
     case localeUnsupported(String)
     case audioConversionFailed
+    /// `finish()` was called on a session that already finished or cancelled.
+    case sessionAlreadyEnded
 }
 
 extension SpeechAnalyzerBackendError: LocalizedError {
@@ -330,6 +332,8 @@ extension SpeechAnalyzerBackendError: LocalizedError {
             "Apple Speech doesn't support the \(identifier) locale."
         case .audioConversionFailed:
             "Couldn't convert audio for Apple Speech."
+        case .sessionAlreadyEnded:
+            "The dictation session already ended."
         }
     }
 }
