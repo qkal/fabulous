@@ -15,6 +15,9 @@ final class OverlayModel {
     var phase: Phase = .recording
     /// Smoothed input level, 0…1.
     var level: Float = 0
+    /// Live partial transcript while streaming (empty = hidden). Raw engine
+    /// output — post-processing only runs on the final text.
+    var partialText: String = ""
     /// Drives the pop-in/out animation; the panel outlives the transition.
     var visible: Bool = false
 }
@@ -38,6 +41,7 @@ final class OverlayController {
     func showRecording() {
         model.phase = .recording
         model.level = 0
+        model.partialText = ""
         show()
     }
 
@@ -50,6 +54,12 @@ final class OverlayController {
         // Light exponential smoothing so the wave breathes instead of
         // flickering per buffer.
         model.level = model.level * 0.6 + min(1, level * 4) * 0.4
+    }
+
+    /// Streams the live partial transcript into the recording pill.
+    func updatePartial(_ text: String) {
+        guard model.phase == .recording else { return }
+        model.partialText = text
     }
 
     /// Shows a transient notice in the capsule, then hides. Used by the
@@ -152,8 +162,19 @@ private struct OverlayView: View {
             switch model.phase {
             case .recording:
                 CapsuleChrome(energy: CGFloat(min(1, model.level))) {
-                    SiriWave(level: model.level, energetic: true)
-                        .frame(width: 96, height: 26)
+                    VStack(spacing: 5) {
+                        SiriWave(level: model.level, energetic: true)
+                            .frame(width: 96, height: 26)
+                        if !model.partialText.isEmpty {
+                            Text(model.partialText)
+                                .font(.caption)
+                                .foregroundStyle(OverlayStyle.ice.opacity(0.75))
+                                .lineLimit(1)
+                                .truncationMode(.head)   // tail of speech wins
+                                .frame(maxWidth: 280)
+                                .transition(.opacity)
+                        }
+                    }
                 }
             case .transcribing:
                 CapsuleChrome {
