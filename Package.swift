@@ -69,7 +69,7 @@ let package = Package(
 
         .testTarget(name: "FabCoreTests", dependencies: ["FabCore"]),
         .testTarget(name: "AudioCaptureTests", dependencies: ["AudioCapture"]),
-        .testTarget(name: "TextInjectorTests", dependencies: ["TextInjector"]),
+        .testTarget(name: "TextInjectorTests", dependencies: ["TextInjector", "FabCore"]),
         .testTarget(name: "HotkeyEngineTests", dependencies: ["HotkeyEngine"]),
         .testTarget(name: "HistoryStoreTests", dependencies: ["HistoryStore"]),
         .testTarget(name: "TranscriptionEngineTests", dependencies: ["TranscriptionEngine"]),

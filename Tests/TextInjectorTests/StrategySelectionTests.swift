@@ -1,5 +1,6 @@
 import Testing
 import TextInjector
+import FabCore
 
 @Suite("StrategySelector")
 struct StrategySelectionTests {
@@ -71,5 +72,16 @@ struct StrategySelectionTests {
     @Test func chainsNeverPromoteBackToCleanerStrategies() {
         #expect(StrategySelector.chain(startingAt: .paste) == [.paste, .keystrokes])
         #expect(StrategySelector.chain(startingAt: .keystrokes) == [.keystrokes])
+    }
+}
+
+/// DeliveryMethod (FabCore) mirrors InjectionStrategy's raw values so
+/// AppController can map by rawValue. A case rename in either enum fails here.
+@Test func deliveryMethodCoversEveryInjectionStrategy() {
+    for strategy in InjectionStrategy.allCases {
+        #expect(
+            DeliveryMethod(rawValue: strategy.rawValue) != nil,
+            "InjectionStrategy.\(strategy.rawValue) has no DeliveryMethod twin"
+        )
     }
 }
