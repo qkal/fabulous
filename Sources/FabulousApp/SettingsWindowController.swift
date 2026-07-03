@@ -1,4 +1,5 @@
 import AppKit
+import FabCore
 import SwiftUI
 
 @MainActor
@@ -24,6 +25,8 @@ final class SettingsWindowController {
             // content size collapses to the SwiftUI intrinsic height (which
             // for a Form-in-navigation can be ~zero) — always set one.
             window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+            window.titlebarAppearsTransparent = true
+            window.backgroundColor = PaperTheme.paperNSColor
             window.setContentSize(NSSize(width: 760, height: 520))
             window.contentMinSize = NSSize(width: 640, height: 420)
             window.isReleasedWhenClosed = false

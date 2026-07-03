@@ -55,10 +55,14 @@ struct SettingsRootView: View {
                     .tag(item)
             }
             .navigationSplitViewColumnWidth(min: 170, ideal: 190, max: 240)
+            .scrollContentBackground(.hidden)
+            .background(PaperTheme.paper)
         } detail: {
             detailView
                 .navigationTitle(section.title)
         }
+        .background(PaperTheme.paper)
+        .tint(PaperTheme.accent)
         .frame(minWidth: 640, minHeight: 420)
     }
 
@@ -162,6 +166,8 @@ private struct GeneralSettingsPane: View {
             }
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .background(PaperTheme.paper)
         .onAppear {
             devices = AudioDevices.inputDevices()
             launchAtLogin = LaunchAtLogin.isEnabled
@@ -225,6 +231,8 @@ private struct ModelsSettingsPane: View {
             }
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .background(PaperTheme.paper)
     }
 }
 
@@ -349,6 +357,8 @@ private struct ReplacementsSettingsPane: View {
             }
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .background(PaperTheme.paper)
     }
 
     private func add() {
@@ -411,6 +421,8 @@ private struct HistorySettingsPane: View {
             }
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .background(PaperTheme.paper)
         .onAppear { entries = actions.recentTranscripts() }
     }
 }
