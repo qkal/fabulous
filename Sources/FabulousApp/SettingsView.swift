@@ -48,6 +48,8 @@ struct SettingsRootView: View {
 
     @State private var section: SettingsSection = .general
 
+    private var theme: Theme { Theme.current(store.theme) }
+
     var body: some View {
         NavigationSplitView {
             List(SettingsSection.allCases, selection: $section) { item in
@@ -56,13 +58,14 @@ struct SettingsRootView: View {
             }
             .navigationSplitViewColumnWidth(min: 170, ideal: 190, max: 240)
             .scrollContentBackground(.hidden)
-            .background(PaperTheme.paper)
+            .background(theme.paper)
         } detail: {
             detailView
                 .navigationTitle(section.title)
         }
-        .background(PaperTheme.paper)
-        .tint(PaperTheme.accent)
+        .background(theme.paper)
+        .environment(\.theme, theme)
+        .tint(theme.accent)
         .frame(minWidth: 640, minHeight: 420)
     }
 
@@ -90,6 +93,8 @@ private struct GeneralSettingsPane: View {
     @Bindable var store: SettingsStore
     let actions: SettingsActions
 
+    @Environment(\.theme) private var theme
+
     @State private var capturing = false
     @State private var captureSession = KeyCaptureSession()
     @State private var devices: [CaptureDevice] = []
@@ -98,6 +103,24 @@ private struct GeneralSettingsPane: View {
 
     var body: some View {
         Form {
+            Section("Appearance") {
+                Picker("Theme", selection: $store.theme) {
+                    ForEach(ThemeKind.allCases, id: \.self) { kind in
+                        Text(kind.displayName).tag(kind)
+                    }
+                }
+                .pickerStyle(.radioGroup)
+                Picker("Appearance", selection: $store.appearance) {
+                    ForEach(AppearanceKind.allCases, id: \.self) { kind in
+                        Text(kind.displayName).tag(kind)
+                    }
+                }
+                .pickerStyle(.radioGroup)
+                Text("Glass is always dark.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Dictation hotkey") {
                 LabeledContent("Shortcut") {
                     HStack {
@@ -167,7 +190,7 @@ private struct GeneralSettingsPane: View {
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
-        .background(PaperTheme.paper)
+        .background(theme.paper)
         .onAppear {
             devices = AudioDevices.inputDevices()
             launchAtLogin = LaunchAtLogin.isEnabled
@@ -203,6 +226,8 @@ private struct ModelsSettingsPane: View {
     let connectivity: ConnectivityMonitor
     let actions: SettingsActions
 
+    @Environment(\.theme) private var theme
+
     var body: some View {
         Form {
             if !connectivity.isOnline {
@@ -232,7 +257,7 @@ private struct ModelsSettingsPane: View {
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
-        .background(PaperTheme.paper)
+        .background(theme.paper)
     }
 }
 
@@ -309,6 +334,8 @@ private struct ModelRow: View {
 private struct ReplacementsSettingsPane: View {
     @Bindable var store: SettingsStore
 
+    @Environment(\.theme) private var theme
+
     @State private var newPattern = ""
     @State private var newReplacement = ""
 
@@ -358,7 +385,7 @@ private struct ReplacementsSettingsPane: View {
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
-        .background(PaperTheme.paper)
+        .background(theme.paper)
     }
 
     private func add() {
@@ -377,6 +404,8 @@ private struct ReplacementsSettingsPane: View {
 private struct HistorySettingsPane: View {
     @Bindable var store: SettingsStore
     let actions: SettingsActions
+
+    @Environment(\.theme) private var theme
 
     @State private var entries: [TranscriptEntry] = []
 
@@ -422,7 +451,7 @@ private struct HistorySettingsPane: View {
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
-        .background(PaperTheme.paper)
+        .background(theme.paper)
         .onAppear { entries = actions.recentTranscripts() }
     }
 }

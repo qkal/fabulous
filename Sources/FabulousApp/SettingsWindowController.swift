@@ -25,7 +25,7 @@ final class SettingsWindowController {
             // for a Form-in-navigation can be ~zero) — always set one.
             window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
             window.titlebarAppearsTransparent = true
-            window.backgroundColor = PaperTheme.paperNSColor
+            window.backgroundColor = Theme.current(store.theme).paperNSColor
             window.setContentSize(NSSize(width: 760, height: 520))
             window.contentMinSize = NSSize(width: 640, height: 420)
             window.isReleasedWhenClosed = false
@@ -35,5 +35,11 @@ final class SettingsWindowController {
         }
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// Repaints the window chrome on a live theme switch — the dynamic
+    /// NSColor handles appearance changes by itself, but not theme changes.
+    func refreshBackground(_ color: NSColor) {
+        window?.backgroundColor = color
     }
 }
