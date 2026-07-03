@@ -112,6 +112,23 @@ public final class TextInjector {
         guard let source = CGEventSource(stateID: .combinedSessionState) else {
             return false
         }
+        for segment in KeystrokeSegmenter.segments(of: text) {
+            switch segment {
+            case .newline:
+                guard postKeystroke(keyCode: CGKeyCode(kVK_Return), flags: []) else {
+                    return false
+                }
+                try? await Task.sleep(for: .milliseconds(5))
+            case let .text(run):
+                guard await postUnicodeString(run, source: source) else {
+                    return false
+                }
+            }
+        }
+        return true
+    }
+
+    private func postUnicodeString(_ text: String, source: CGEventSource) async -> Bool {
         let units = Array(text.utf16)
         // keyboardSetUnicodeString caps out around 20 UTF-16 units per event.
         let chunkSize = 20
