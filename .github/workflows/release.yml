@@ -1,0 +1,73 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    # Pinned for the macOS 26 SDK — see ci.yml.
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode 26
+        run: |
+          # shellcheck disable=SC2010,SC2012
+          XCODE=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "${XCODE}" ]; then
+            echo "::error::No Xcode 26.x on this image. Available:"
+            # shellcheck disable=SC2010
+            ls /Applications | grep -i xcode || true
+            exit 1
+          fi
+          sudo xcode-select -s "${XCODE}/Contents/Developer"
+          xcodebuild -version
+
+      - name: Cache SwiftPM
+        uses: actions/cache@v4
+        with:
+          path: |
+            .build
+            ~/Library/Caches/org.swift.swiftpm
+          key: swiftpm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            swiftpm-${{ runner.os }}-
+
+      - name: Test
+        run: swift test
+
+      - name: Stamp version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION}" Support/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${GITHUB_RUN_NUMBER}" Support/Info.plist
+          echo "version=${VERSION}"
+
+      - name: Build app bundle
+        # No signing identity on CI -> build.sh's ad-hoc branch runs.
+        # Unsigned distribution is deliberate; see docs/specs/ci-dmg-release.md.
+        run: scripts/build.sh
+
+      - name: Package dmg
+        run: |
+          brew install create-dmg
+          scripts/make-dmg.sh "${GITHUB_REF_NAME#v}"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          # Generated notes via API, then append the install section —
+          # sidesteps gh's --generate-notes/--notes-file combination rules.
+          gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+            -f tag_name="${GITHUB_REF_NAME}" --jq .body > notes.md
+          cat .github/release-install-section.md >> notes.md
+          gh release create "${GITHUB_REF_NAME}" \
+            "build/fabulous-${VERSION}.dmg" \
+            --title "fabulous ${VERSION}" \
+            --notes-file notes.md
