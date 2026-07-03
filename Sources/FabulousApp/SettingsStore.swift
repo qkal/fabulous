@@ -19,6 +19,8 @@ final class SettingsStore {
         static let replacementEntries = "replacementEntries"
         static let theme = "theme"
         static let appearance = "appearance"
+        static let llmCleanupEnabled = "llmCleanupEnabled"
+        static let llmVocabulary = "llmVocabulary"
     }
 
     @ObservationIgnored private let defaults: UserDefaults
@@ -27,6 +29,7 @@ final class SettingsStore {
     @ObservationIgnored var onEngineChanged: (() -> Void)?
     @ObservationIgnored var onThemeChanged: (() -> Void)?
     @ObservationIgnored var onAppearanceChanged: (() -> Void)?
+    @ObservationIgnored var onLLMCleanupChanged: (() -> Void)?
 
     var hotkeySpec: HotkeySpec {
         didSet {
@@ -96,6 +99,26 @@ final class SettingsStore {
         }
     }
 
+    /// LLM transcript cleanup (Apple Foundation Models). Off by default —
+    /// it adds latency before injection.
+    var llmCleanupEnabled: Bool {
+        didSet {
+            guard llmCleanupEnabled != oldValue else { return }
+            defaults.set(llmCleanupEnabled, forKey: Keys.llmCleanupEnabled)
+            onLLMCleanupChanged?()
+        }
+    }
+
+    /// Names and jargon the cleanup model should prefer when audio is
+    /// ambiguous. Feeds only the LLM prompt.
+    var llmVocabulary: [String] {
+        didSet {
+            guard llmVocabulary != oldValue else { return }
+            defaults.set(llmVocabulary, forKey: Keys.llmVocabulary)
+            onLLMCleanupChanged?()
+        }
+    }
+
     let historyCap = 500
 
     init(defaults: UserDefaults = .standard) {
@@ -120,5 +143,7 @@ final class SettingsStore {
         replacementEntries = defaults.data(forKey: Keys.replacementEntries)
             .flatMap { try? JSONDecoder().decode([ReplacementDictionary.Entry].self, from: $0) }
             ?? []
+        llmCleanupEnabled = defaults.bool(forKey: Keys.llmCleanupEnabled)
+        llmVocabulary = defaults.stringArray(forKey: Keys.llmVocabulary) ?? []
     }
 }

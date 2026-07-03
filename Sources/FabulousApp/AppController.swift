@@ -3,6 +3,7 @@ import AudioCapture
 import FabCore
 import HistoryStore
 import HotkeyEngine
+import PostProcessing
 import SwiftUI
 import TextInjector
 import TranscriptionEngine
@@ -43,6 +44,9 @@ final class AppController {
     // Rebuilt from the settings' replacement entries; the (v1.5) LLM cleanup
     // pass slots in here as another pipeline stage.
     private var postProcessor: any TextPostProcessor = PassthroughPostProcessor()
+    /// LLM cleanup stage; nil when disabled or the model is unavailable.
+    /// Runs before `postProcessor` so deterministic replacements win.
+    private var llmProcessor: (any ContextualTextPostProcessor)?
 
     // App state & UI
     private let settings = SettingsStore()
@@ -112,6 +116,7 @@ final class AppController {
             statusItem.update(for: state, hotkeyName: settings.hotkeySpec.displayName)
         }
         settings.onReplacementsChanged = { [weak self] in self?.rebuildPostProcessor() }
+        settings.onLLMCleanupChanged = { [weak self] in self?.rebuildLLMProcessor() }
         settings.onEngineChanged = { [weak self] in
             guard let self, state == .idle || isFailed(state) else { return }
             Task { await self.ensureSelectedModelLoaded() }
@@ -129,6 +134,7 @@ final class AppController {
             applyEffectiveAppearance()
         }
         rebuildPostProcessor()
+        rebuildLLMProcessor()
 
         Task { await upgradeVAD() }
 
@@ -492,8 +498,16 @@ final class AppController {
                 }
             )
             let transcribedAt = clock.now
-            let text = try await postProcessor.process(transcript.text)
+            let rawText = transcript.text
+            var cleaned = rawText
+            if let llmProcessor {
+                await llmProcessor.setAppContext(name: recordingTargetAppName())
+                // The LLM stage never throws — it falls back to raw internally.
+                cleaned = (try? await llmProcessor.process(rawText)) ?? rawText
+            }
+            let text = try await postProcessor.process(cleaned)
             let processedAt = clock.now
+            let llmChangedText = cleaned != rawText
             guard !text.isEmpty else {
                 state = .idle
                 overlay.hide()
@@ -501,7 +515,11 @@ final class AppController {
             }
             lastTranscript = text
             statusItem.setLastTranscriptAvailable(true)
-            recordHistory(text: text, audioSeconds: transcript.audioDuration ?? audio.duration)
+            recordHistory(
+                text: text,
+                rawText: llmChangedText ? rawText : nil,
+                audioSeconds: transcript.audioDuration ?? audio.duration
+            )
 
             await deliver(text)
             let deliveredAt = clock.now
@@ -641,11 +659,36 @@ final class AppController {
             : ReplacementDictionary(entries: entries)
     }
 
-    private func recordHistory(text: String, audioSeconds: TimeInterval) {
+    /// (Re)creates the LLM stage. Vocabulary is baked into the instructions,
+    /// so a vocabulary edit also lands here via onLLMCleanupChanged.
+    private func rebuildLLMProcessor() {
+        guard settings.llmCleanupEnabled,
+              PostProcessingAvailability.current == .available,
+              #available(macOS 26.0, *)
+        else {
+            llmProcessor = nil
+            return
+        }
+        llmProcessor = FoundationModelPostProcessor(
+            requester: FoundationModelRequester(),
+            vocabulary: settings.llmVocabulary
+        )
+        FoundationModelRequester.prewarm()
+    }
+
+    /// Name of the app dictation started in — the injection target.
+    private func recordingTargetAppName() -> String? {
+        recordingTargetPID.flatMap {
+            NSRunningApplication(processIdentifier: $0)?.localizedName
+        }
+    }
+
+    private func recordHistory(text: String, rawText: String?, audioSeconds: TimeInterval) {
         guard settings.historyEnabled, let history else { return }
         do {
             try history.record(
                 text: text,
+                rawText: rawText,
                 audioSeconds: audioSeconds,
                 modelID: activeModelID ?? "unknown",
                 cap: settings.historyCap
