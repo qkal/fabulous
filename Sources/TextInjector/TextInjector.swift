@@ -15,6 +15,13 @@ public enum InjectionError: Error, Sendable, Equatable {
 @MainActor
 public final class TextInjector {
     private let selector: StrategySelector
+    /// Pending clipboard restore from the last paste. Cancelled when a new
+    /// injection starts, so a rapid follow-up dictation can't have its
+    /// freshly-written transcript clobbered by the previous restore.
+    /// Paths that skip inject() (e.g. the app-level clipboard safety net)
+    /// are still safe: any pasteboard write bumps changeCount, which
+    /// defuses a pending restore.
+    private var restoreTask: Task<Void, Never>?
 
     public init(selector: StrategySelector = StrategySelector()) {
         self.selector = selector
@@ -24,6 +31,9 @@ public final class TextInjector {
     @discardableResult
     public func inject(_ text: String) async throws -> InjectionStrategy {
         guard !text.isEmpty else { throw InjectionError.allStrategiesFailed }
+
+        restoreTask?.cancel()
+        restoreTask = nil
 
         let context = InjectionContext(
             frontmostBundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
@@ -96,12 +106,22 @@ public final class TextInjector {
             return false
         }
 
-        // Wait for the target app to service the paste, then restore —
+        // The text is delivered once ⌘V posts; only clipboard bookkeeping
+        // remains. Restore runs off the critical path: wait for the target
+        // app to service the paste, then put the old clipboard back —
         // unless something else wrote to the clipboard in the meantime.
-        try? await Task.sleep(for: .milliseconds(300))
-        if pasteboard.changeCount == ourChangeCount, let saved {
-            pasteboard.clearContents()
-            pasteboard.setString(saved, forType: .string)
+        // (Quitting inside this window skips the restore; the clipboard
+        // then holds the transcript, never garbage.)
+        if let saved {
+            restoreTask = Task {
+                do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
+                guard !Task.isCancelled else { return }
+                let pasteboard = NSPasteboard.general
+                if pasteboard.changeCount == ourChangeCount {
+                    pasteboard.clearContents()
+                    pasteboard.setString(saved, forType: .string)
+                }
+            }
         }
         return true
     }

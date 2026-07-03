@@ -166,6 +166,10 @@ Info.plist stays 0.0.0-dev in git); LLM post-processing
 Foundation Models — fillers, punctuation, spoken commands (new line/paragraph,
 scratch that, quote…unquote), vocabulary bias, app-name hint; raw transcript
 kept in history (`rawText`) when cleanup changed it.
+injection latency (docs/specs/injection-latency.md): paste clipboard
+restore moved off the critical path (~370 ms → ~60 ms delivery),
+per-dictation DeliveryMethod (axInsert/paste/keystrokes/safetyNet) in
+metrics + menu "Inject" stats line.
 
 Not yet built: Parakeet/FluidAudio backend (only if SpeechAnalyzer
 disappoints), per-app injection override settings UI. See docs/architecture.md

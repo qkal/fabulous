@@ -14,6 +14,20 @@ public enum LLMCleanupOutcome: String, Sendable, Codable, Equatable, CaseIterabl
     case fellBack
 }
 
+/// How one dictation's text reached the target app. Persisted by raw value —
+/// case names are part of the on-disk schema. Decoupled from TextInjector's
+/// InjectionStrategy on purpose: this is "how the text got delivered", which
+/// includes the clipboard safety net that is not an injection strategy. The
+/// first three raw values intentionally match InjectionStrategy's.
+public enum DeliveryMethod: String, Sendable, Codable, Equatable, CaseIterable {
+    case axInsert
+    case paste
+    case keystrokes
+    /// Clipboard fallback, any reason: focus change, secure input,
+    /// accessibility revoked, or all strategies failed.
+    case safetyNet
+}
+
 /// Per-stage timing of one dictation, measured from hotkey release to text
 /// delivered. This is the evidence behind the < 1.5 s latency budget — and
 /// behind any future decision to build streaming or a faster backend.
@@ -35,6 +49,9 @@ public struct DictationMetrics: Sendable, Equatable {
     /// True when the audio was fed to the engine live during recording, so
     /// `transcription` is just the finalize wait (phase-5 streaming path).
     public var streamed: Bool
+    /// How the text reached the target app. Defaults to the conservative
+    /// safety-net label; the production caller always passes the real value.
+    public var deliveryMethod: DeliveryMethod
 
     public init(
         audioDuration: TimeInterval,
@@ -45,7 +62,8 @@ public struct DictationMetrics: Sendable, Equatable {
         postProcessing: Duration,
         delivery: Duration,
         total: Duration,
-        streamed: Bool = false
+        streamed: Bool = false,
+        deliveryMethod: DeliveryMethod = .safetyNet
     ) {
         self.audioDuration = audioDuration
         self.stopAndTrim = stopAndTrim
@@ -56,6 +74,7 @@ public struct DictationMetrics: Sendable, Equatable {
         self.delivery = delivery
         self.total = total
         self.streamed = streamed
+        self.deliveryMethod = deliveryMethod
     }
 
     /// Compact one-liner for the menu bar, leading with what the user feels.
@@ -77,6 +96,7 @@ public struct DictationMetrics: Sendable, Equatable {
             + " delivery=\(Self.seconds(delivery))"
             + " audio=\(String(format: "%.2f", audioDuration))s"
             + (streamed ? " streamed" : "")
+            + " via=\(deliveryMethod.rawValue)"
     }
 
     /// True when the felt latency blew the budget (show a hint, not a party).

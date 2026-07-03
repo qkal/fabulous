@@ -10,6 +10,7 @@ final class StatusItemController {
     private let metricsItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let statsItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let cleanupStatsItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private let deliveryStatsItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let copyItem = NSMenuItem(
         title: "Copy Last Transcript",
         action: #selector(copyLastTranscript),
@@ -51,6 +52,8 @@ final class StatusItemController {
         statsItem.isHidden = true // until stats exist for the active engine
         cleanupStatsItem.isEnabled = false
         cleanupStatsItem.isHidden = true // until an LLM-cleaned dictation exists
+        deliveryStatsItem.isEnabled = false
+        deliveryStatsItem.isHidden = true // until a post-v6 dictation exists
         copyItem.target = self
         copyItem.isEnabled = false
         settingsItem.target = self
@@ -68,6 +71,7 @@ final class StatusItemController {
             metricsItem,
             statsItem,
             cleanupStatsItem,
+            deliveryStatsItem,
             .separator(),
             copyItem,
             settingsItem,
@@ -137,6 +141,13 @@ final class StatusItemController {
     func setCleanupStats(_ summary: String?) {
         cleanupStatsItem.title = summary ?? ""
         cleanupStatsItem.isHidden = summary == nil
+    }
+
+    /// Delivery-method share + p50 line under the cleanup line; nil hides
+    /// it (no post-migration dictations, or metrics store unavailable).
+    func setDeliveryStats(_ summary: String?) {
+        deliveryStatsItem.title = summary ?? ""
+        deliveryStatsItem.isHidden = summary == nil
     }
 
     @objc private func openSettings() {

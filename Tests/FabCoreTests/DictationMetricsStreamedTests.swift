@@ -25,7 +25,7 @@ import Testing
     }
 
     @Test func logLineMarksStreamedDictations() {
-        #expect(metrics(streamed: true).logLine.hasSuffix(" streamed"))
+        #expect(metrics(streamed: true).logLine.contains(" streamed"))
         #expect(!metrics(streamed: false).logLine.contains("streamed"))
     }
 }
