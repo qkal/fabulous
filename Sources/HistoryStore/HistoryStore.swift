@@ -2,7 +2,8 @@ import Foundation
 import GRDB
 
 /// One dictated transcript, as stored locally. Text only — audio is never
-/// persisted anywhere.
+/// persisted anywhere. rawText is the pre-LLM-cleanup transcript; kept only
+/// when LLM cleanup changed the transcript, otherwise nil.
 public struct TranscriptEntry: Codable, Sendable, Equatable, Identifiable,
     FetchableRecord, MutablePersistableRecord
 {
@@ -13,19 +14,22 @@ public struct TranscriptEntry: Codable, Sendable, Equatable, Identifiable,
     public var createdAt: Date
     public var audioSeconds: Double
     public var modelID: String
+    public var rawText: String?
 
     public init(
         id: Int64? = nil,
         text: String,
         createdAt: Date,
         audioSeconds: Double,
-        modelID: String
+        modelID: String,
+        rawText: String? = nil
     ) {
         self.id = id
         self.text = text
         self.createdAt = createdAt
         self.audioSeconds = audioSeconds
         self.modelID = modelID
+        self.rawText = rawText
     }
 
     public mutating func didInsert(_ inserted: InsertionSuccess) {
@@ -166,6 +170,13 @@ public final class HistoryStore: Sendable {
                 t.add(column: "streamed", .boolean).notNull().defaults(to: false)
             }
         }
+        migrator.registerMigration("v4-transcript-rawtext") { db in
+            try db.alter(table: TranscriptEntry.databaseTableName) { t in
+                // Pre-LLM-cleanup transcript; NULL when cleanup was off
+                // or changed nothing.
+                t.add(column: "rawText", .text)
+            }
+        }
         return migrator
     }
 
@@ -173,6 +184,7 @@ public final class HistoryStore: Sendable {
     @discardableResult
     public func record(
         text: String,
+        rawText: String? = nil,
         audioSeconds: Double,
         modelID: String,
         cap: Int,
@@ -180,7 +192,8 @@ public final class HistoryStore: Sendable {
     ) throws -> TranscriptEntry {
         try dbQueue.write { db in
             var entry = TranscriptEntry(
-                text: text, createdAt: date, audioSeconds: audioSeconds, modelID: modelID
+                text: text, createdAt: date, audioSeconds: audioSeconds, modelID: modelID,
+                rawText: rawText
             )
             try entry.insert(db)
             try db.execute(

@@ -148,4 +148,21 @@ struct HistoryStoreTests {
         #expect(HistoryStore.percentile([10, 20], 0.9) == 20)
         #expect(HistoryStore.percentile([10, 20, 30, 40], 0.5) == 20)
     }
+
+    @Test func recordStoresRawTextWhenProvided() throws {
+        let store = try HistoryStore.inMemory()
+        try store.record(
+            text: "Ship it.", rawText: "um ship it",
+            audioSeconds: 1.2, modelID: "test", cap: 10
+        )
+        let entries = try store.recent()
+        #expect(entries.first?.text == "Ship it.")
+        #expect(entries.first?.rawText == "um ship it")
+    }
+
+    @Test func rawTextDefaultsToNil() throws {
+        let store = try HistoryStore.inMemory()
+        try store.record(text: "hello", audioSeconds: 1, modelID: "test", cap: 10)
+        #expect(try store.recent().first?.rawText == nil)
+    }
 }
