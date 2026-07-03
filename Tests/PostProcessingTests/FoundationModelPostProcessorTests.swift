@@ -23,6 +23,21 @@ private struct FakeRequester: LanguageModelRequesting {
     }
 }
 
+/// Records the instruction strings handed to prepare/cleanup.
+private actor RecordingRequester: LanguageModelRequesting {
+    private(set) var preparedInstructions: [String] = []
+    private(set) var cleanedInstructions: [String] = []
+
+    func prepare(instructions: String) async {
+        preparedInstructions.append(instructions)
+    }
+
+    func cleanup(instructions: String, transcript: String) async throws -> String {
+        cleanedInstructions.append(instructions)
+        return transcript
+    }
+}
+
 struct FoundationModelPostProcessorTests {
     private func processor(
         _ behavior: FakeRequester.Behavior,
@@ -86,5 +101,82 @@ struct FoundationModelPostProcessorTests {
         #expect(FoundationModelPostProcessor.endsWithScratchThat("blah blah, scratch that."))
         #expect(!FoundationModelPostProcessor.endsWithScratchThat("hello world"))
         #expect(!FoundationModelPostProcessor.endsWithScratchThat("scratch that section off the list"))
+    }
+
+    // MARK: - CleanupReport outcomes
+
+    @Test func reportChangedWhenModelRewrites() async {
+        let p = processor(.reply("Ship it."))
+        let report = await p.cleanup("um ship it")
+        #expect(report == CleanupReport(text: "Ship it.", outcome: .changed))
+    }
+
+    @Test func reportUnchangedWhenModelEchoes() async {
+        let p = processor(.reply("um ship it"))
+        let report = await p.cleanup("um ship it")
+        #expect(report == CleanupReport(text: "um ship it", outcome: .unchanged))
+    }
+
+    @Test func reportUnchangedComparesAfterEdgeStrip() async {
+        // Model echoed with stray edge spaces: text is stripped, still a no-op.
+        let p = processor(.reply("  um ship it "))
+        let report = await p.cleanup("um ship it")
+        #expect(report == CleanupReport(text: "um ship it", outcome: .unchanged))
+    }
+
+    @Test func reportFellBackOnError() async {
+        let p = processor(.fail)
+        let report = await p.cleanup("um ship it")
+        #expect(report == CleanupReport(text: "um ship it", outcome: .fellBack))
+    }
+
+    @Test func reportFellBackOnTimeout() async {
+        let p = processor(.hang, timeout: .milliseconds(50))
+        let report = await p.cleanup("um ship it")
+        #expect(report == CleanupReport(text: "um ship it", outcome: .fellBack))
+    }
+
+    @Test func reportFellBackOnRejectedEmptyOutput() async {
+        let p = processor(.reply("  \n"))
+        let report = await p.cleanup("hello world")
+        #expect(report == CleanupReport(text: "hello world", outcome: .fellBack))
+    }
+
+    @Test func reportChangedOnLegitimateScratchToEmpty() async {
+        let p = processor(.reply(""))
+        let report = await p.cleanup("blah blah scratch that")
+        #expect(report == CleanupReport(text: "", outcome: .changed))
+    }
+
+    @Test func reportOffOnEmptyInput() async {
+        let p = processor(.fail) // would throw if the model were called
+        let report = await p.cleanup("")
+        #expect(report == CleanupReport(text: "", outcome: .off))
+    }
+
+    // MARK: - Prewarm
+
+    @Test func prepareForwardsExactCleanupInstructions() async throws {
+        let requester = RecordingRequester()
+        let p = FoundationModelPostProcessor(
+            requester: requester, vocabulary: ["WhisperKit"]
+        )
+        await p.setAppContext(name: "Notes")
+        await p.prepare()
+        _ = await p.cleanup("hello")
+        let prepared = await requester.preparedInstructions
+        let cleaned = await requester.cleanedInstructions
+        // The prewarmed instructions must be byte-identical to what cleanup
+        // sends, or the real requester discards the warmed session.
+        #expect(prepared == cleaned)
+        #expect(prepared.count == 1)
+    }
+
+    @Test func defaultPrepareIsANoOp() async throws {
+        // FakeRequester doesn't implement prepare(instructions:) — the
+        // protocol-extension default keeps existing requester fakes
+        // source-compatible, and the processor's prepare() tolerates it.
+        let p = processor(.reply("x"))
+        await p.prepare()
     }
 }

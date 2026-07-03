@@ -368,6 +368,15 @@ final class AppController {
         do {
             try await recorder.start(deviceUID: settings.inputDeviceUID)
             recordingTargetPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
+            // Warm the cleanup session while the user speaks: the session
+            // and its instructions prefix are ready when transcription ends.
+            // Fire-and-forget — prewarm is opportunistic, never blocking.
+            if let llmProcessor {
+                Task {
+                    await llmProcessor.setAppContext(name: recordingTargetAppName())
+                    await llmProcessor.prepare()
+                }
+            }
             hotkey.interceptEscape = true
             state = .recording
             overlay.showRecording()
@@ -500,6 +509,7 @@ final class AppController {
             let transcribedAt = clock.now
             let rawText = transcript.text
             var cleaned = rawText
+            var llmOutcome = LLMCleanupOutcome.off
             // The model may have become available since launch (e.g. it was
             // still downloading) — cheap re-check so cleanup doesn't stay
             // dead until restart.
@@ -508,12 +518,13 @@ final class AppController {
             }
             if let llmProcessor {
                 await llmProcessor.setAppContext(name: recordingTargetAppName())
-                // The LLM stage never throws — it falls back to raw internally.
-                cleaned = (try? await llmProcessor.process(rawText)) ?? rawText
+                let report = await llmProcessor.cleanup(rawText)
+                cleaned = report.text
+                llmOutcome = report.outcome
             }
+            let llmDoneAt = clock.now
             let text = try await postProcessor.process(cleaned)
             let processedAt = clock.now
-            let llmChangedText = cleaned != rawText
             guard !text.isEmpty else {
                 state = .idle
                 overlay.hide()
@@ -523,7 +534,7 @@ final class AppController {
             statusItem.setLastTranscriptAvailable(true)
             recordHistory(
                 text: text,
-                rawText: llmChangedText ? rawText : nil,
+                rawText: llmOutcome == .changed ? rawText : nil,
                 audioSeconds: transcript.audioDuration ?? audio.duration
             )
 
@@ -535,7 +546,9 @@ final class AppController {
                 audioDuration: transcript.audioDuration ?? audio.duration,
                 stopAndTrim: stoppedAt - releasedAt,
                 transcription: transcribedAt - stoppedAt,
-                postProcessing: processedAt - transcribedAt,
+                llmCleanup: llmOutcome == .off ? .zero : llmDoneAt - transcribedAt,
+                llmOutcome: llmOutcome,
+                postProcessing: processedAt - llmDoneAt,
                 delivery: deliveredAt - processedAt,
                 total: deliveredAt - releasedAt,
                 streamed: streamed
@@ -631,10 +644,14 @@ final class AppController {
                 postMs: DictationMetrics.milliseconds(metrics.postProcessing),
                 deliveryMs: DictationMetrics.milliseconds(metrics.delivery),
                 totalMs: DictationMetrics.milliseconds(metrics.total),
-                streamed: metrics.streamed
+                streamed: metrics.streamed,
+                llmMs: DictationMetrics.milliseconds(metrics.llmCleanup),
+                llmOutcome: metrics.llmOutcome
             ))
             let stats = try history.latencyStats(engineID: engineID)
             statusItem.setLatencyStats(stats.map { Self.statsSummary($0, engineID: engineID) })
+            let cleanupStats = try history.cleanupStats()
+            statusItem.setCleanupStats(cleanupStats?.menuSummary)
         } catch {
             NSLog("fabulous: failed to record metrics: \(error)")
         }
@@ -646,6 +663,8 @@ final class AppController {
         guard let history, let engineID = activeModelID else { return }
         let stats = try? history.latencyStats(engineID: engineID)
         statusItem.setLatencyStats(stats.map { Self.statsSummary($0, engineID: engineID) })
+        let cleanupStats: CleanupStats? = (try? history.cleanupStats()) ?? nil
+        statusItem.setCleanupStats(cleanupStats?.menuSummary)
     }
 
     /// e.g. "Whisper Large v3 Turbo · p50 1.12 s · p90 1.48 s · 42 runs"
