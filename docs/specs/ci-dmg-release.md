@@ -51,6 +51,8 @@ Steps:
 
 Notes:
 
+- Concurrency group per ref with `cancel-in-progress: true` — pushes to a
+  PR cancel the superseded run.
 - Real-engine tests self-skip on CI: `SpeechAnalyzerBackendTests` gate on
   `FAB_REAL_ASR=1` (never set in CI), `SileroVADTests` skip when the VAD
   model is absent. No CI-specific test configuration needed.
@@ -75,11 +77,25 @@ Steps after the same checkout/Xcode/cache setup as CI:
 3. `scripts/build.sh` — unchanged. CI has no signing identity, so the
    script's ad-hoc branch runs (accepted: unsigned distribution).
 4. `scripts/make-dmg.sh` → `fabulous-<version>.dmg` (section 3).
-5. `gh release create "$TAG" fabulous-<version>.dmg --generate-notes`
-   plus a notes file appending the install section:
+5. `gh release create "$TAG" fabulous-<version>.dmg` with auto-generated
+   notes plus an appended install section:
+   - **Apple Silicon only** (arm64 binary; Intel Macs not supported)
    - drag app to Applications
-   - `xattr -d com.apple.quarantine /Applications/fabulous.app`
-   - one line on *why* (unsigned; no Apple Developer certificate).
+   - `xattr -dr com.apple.quarantine /Applications/fabulous.app`
+     (recursive — quarantine is set on files inside the bundle too)
+   - one line on *why* (unsigned; no Apple Developer certificate)
+   - **updating**: each release carries a fresh ad-hoc signature, so
+     macOS revokes Microphone/Accessibility grants on update — users
+     must re-grant both after installing a new version.
+
+   Flag caveat: verify at implementation whether `--generate-notes`
+   composes with `--notes-file` (docs suggest provided notes are
+   prepended). Fallback: fetch generated notes via
+   `gh api repos/{repo}/releases/generate-notes`, concatenate, pass as
+   one `--notes-file`.
+
+Accepted quirk: the workflow fires on any `v*` tag, even one on a
+non-main commit. Single-maintainer repo; not worth a ref guard.
 
 ## 3. dmg packaging — `scripts/make-dmg.sh`
 
@@ -95,14 +111,18 @@ derived from Info.plist). Output: `fabulous-<version>.dmg` in `build/`.
 - Background: `Support/dmg-background@2x.png`, committed. Simple generated
   image — app name + arrow, paper-tone matching the app's UI. Swappable
   any time without touching the script.
-- Known flake: `create-dmg` occasionally hits AppleScript/Finder timing
-  errors on CI. The script retries once before failing.
+- Headless CI: Finder scripting is unreliable on runners — the script
+  passes `--skip-jenkins` (create-dmg's headless mode) when `CI` is set,
+  and retries once on failure before hard-failing. Icon layout is
+  verified by running the script locally, where Finder scripting works.
 
 ## 4. Documentation changes
 
-- `README.md`: new **Install** section — download latest dmg from
-  Releases, drag to Applications, run the `xattr` command, short
-  explanation that the app is unsigned.
+- `README.md`: new **Install** section — Apple Silicon requirement,
+  download latest dmg from Releases, drag to Applications, run the
+  `xattr -dr` command, short explanation that the app is unsigned, and
+  the update caveat: Mic/Accessibility permissions must be re-granted
+  after every update (ad-hoc signature changes per release).
 - `CLAUDE.md`: move the release pipeline from "Not yet built" to the done
   list; one-line pointer to this spec.
 
