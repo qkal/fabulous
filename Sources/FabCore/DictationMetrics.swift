@@ -1,5 +1,19 @@
 import Foundation
 
+/// What the LLM cleanup stage did to one dictation. Persisted by raw value —
+/// case names are part of the on-disk schema.
+public enum LLMCleanupOutcome: String, Sendable, Codable, Equatable, CaseIterable {
+    /// Cleanup disabled or unavailable; the stage never ran.
+    case off
+    /// The model ran and returned the transcript unmodified.
+    case unchanged
+    /// The model ran and altered the transcript.
+    case changed
+    /// The stage failed (throw, timeout, rejected empty output) and the raw
+    /// transcript was used — the never-lose-text fallback.
+    case fellBack
+}
+
 /// Per-stage timing of one dictation, measured from hotkey release to text
 /// delivered. This is the evidence behind the < 1.5 s latency budget — and
 /// behind any future decision to build streaming or a faster backend.
@@ -9,6 +23,10 @@ public struct DictationMetrics: Sendable, Equatable {
     /// Stopping the engine, draining the tap, VAD trimming.
     public var stopAndTrim: Duration
     public var transcription: Duration
+    /// Wall time of the LLM cleanup stage; .zero when the stage was off.
+    public var llmCleanup: Duration
+    /// What the LLM cleanup stage did (off / unchanged / changed / fellBack).
+    public var llmOutcome: LLMCleanupOutcome
     public var postProcessing: Duration
     /// Injection, or the clipboard fallback when injection was refused.
     public var delivery: Duration
@@ -22,6 +40,8 @@ public struct DictationMetrics: Sendable, Equatable {
         audioDuration: TimeInterval,
         stopAndTrim: Duration,
         transcription: Duration,
+        llmCleanup: Duration = .zero,
+        llmOutcome: LLMCleanupOutcome = .off,
         postProcessing: Duration,
         delivery: Duration,
         total: Duration,
@@ -30,6 +50,8 @@ public struct DictationMetrics: Sendable, Equatable {
         self.audioDuration = audioDuration
         self.stopAndTrim = stopAndTrim
         self.transcription = transcription
+        self.llmCleanup = llmCleanup
+        self.llmOutcome = llmOutcome
         self.postProcessing = postProcessing
         self.delivery = delivery
         self.total = total
@@ -48,6 +70,9 @@ public struct DictationMetrics: Sendable, Equatable {
         "dictation metrics: total=\(Self.seconds(total))"
             + " stop+vad=\(Self.seconds(stopAndTrim))"
             + " asr=\(Self.seconds(transcription))"
+            + (llmOutcome == .off
+                ? ""
+                : " llm=\(Self.seconds(llmCleanup)) (\(llmOutcome.rawValue))")
             + " post=\(Self.seconds(postProcessing))"
             + " delivery=\(Self.seconds(delivery))"
             + " audio=\(String(format: "%.2f", audioDuration))s"
