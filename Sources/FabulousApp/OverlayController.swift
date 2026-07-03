@@ -148,12 +148,6 @@ final class OverlayController {
 
 // MARK: - Views
 
-/// Shared palette: near-monochrome ice — silver-white with the faintest
-/// cold cast, on black glass. The color comes from light, not from hue.
-private enum OverlayStyle {
-    static let ice = Color(red: 0.88, green: 0.93, blue: 1.0)
-}
-
 private struct OverlayView: View {
     let model: OverlayModel
 
@@ -168,7 +162,7 @@ private struct OverlayView: View {
                         if !model.partialText.isEmpty {
                             Text(model.partialText)
                                 .font(.caption)
-                                .foregroundStyle(OverlayStyle.ice.opacity(0.75))
+                                .foregroundStyle(PaperTheme.inkSecondary)
                                 .lineLimit(1)
                                 .truncationMode(.head)   // tail of speech wins
                                 .frame(maxWidth: 280)
@@ -185,10 +179,10 @@ private struct OverlayView: View {
                 CapsuleChrome {
                     HStack(spacing: 8) {
                         Image(systemName: "exclamationmark.circle.fill")
-                            .foregroundStyle(.yellow)
+                            .foregroundStyle(PaperTheme.accent)
                         Text(text)
                             .font(.caption)
-                            .foregroundStyle(.white.opacity(0.9))
+                            .foregroundStyle(PaperTheme.ink.opacity(0.9))
                             .lineLimit(2)
                             .multilineTextAlignment(.leading)
                     }
@@ -204,6 +198,7 @@ private struct OverlayView: View {
         .animation(.spring(response: 0.34, dampingFraction: 0.7), value: model.visible)
         .frame(width: 360, height: 72)
         .animation(.easeOut(duration: 0.18), value: model.phase)
+        .tint(PaperTheme.accent)
     }
 
 }
@@ -220,17 +215,23 @@ private struct CapsuleChrome<Content: View>: View {
         content
             .padding(.horizontal, 16)
             .padding(.vertical, 9)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(.black.opacity(0.8))
-                    .overlay(
-                        Capsule(style: .continuous)
-                            .strokeBorder(.white.opacity(0.14 + 0.3 * energy), lineWidth: 1)
-                    )
-            )
+            .background {
+                ZStack {
+                    Capsule(style: .continuous)
+                        .fill(.ultraThinMaterial)
+                    // Warm paper tint over the material so the frost reads
+                    // paper, not gray.
+                    Capsule(style: .continuous)
+                        .fill(PaperTheme.paper.opacity(0.42))
+                    Capsule(style: .continuous)
+                        .strokeBorder(
+                            PaperTheme.ink.opacity(0.14 + 0.25 * energy),
+                            lineWidth: 1
+                        )
+                }
+            }
             .scaleEffect(1 + energy * 0.045)
-            .shadow(color: OverlayStyle.ice.opacity(0.3 * energy), radius: 12, y: 0)
-            .shadow(color: .black.opacity(0.4), radius: 9, y: 3)
+            .shadow(color: .black.opacity(0.10 + 0.10 * energy), radius: 14, y: 4)
             .animation(.easeOut(duration: 0.12), value: energy)
     }
 }
@@ -281,7 +282,7 @@ private struct SiriWave: View {
                     let heat = amplitude / max(idle + surge, 0.01)
                     context.fill(
                         Path(roundedRect: rect, cornerRadius: barWidth / 2),
-                        with: .color(OverlayStyle.ice.opacity(0.45 + 0.55 * min(1, heat)))
+                        with: .color(PaperTheme.ink.opacity(0.40 + 0.60 * min(1, heat)))
                     )
                 }
             }
@@ -301,15 +302,15 @@ private struct CometSpinner: View {
             ZStack {
                 // The faint full track grounds the motion.
                 Circle()
-                    .stroke(OverlayStyle.ice.opacity(0.15), lineWidth: 2.5)
-                // The comet: a gradient tail ending in a bright head.
+                    .stroke(PaperTheme.ink.opacity(0.18), lineWidth: 2.5)
+                // The comet: a gradient tail ending in the blue accent head.
                 Circle()
                     .trim(from: 0.08, to: 0.42)
                     .stroke(
                         AngularGradient(
                             gradient: Gradient(colors: [
-                                OverlayStyle.ice.opacity(0),
-                                OverlayStyle.ice,
+                                PaperTheme.accent.opacity(0),
+                                PaperTheme.accent,
                             ]),
                             center: .center,
                             startAngle: .degrees(0.08 * 360),
