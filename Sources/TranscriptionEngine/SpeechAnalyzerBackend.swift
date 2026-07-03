@@ -12,7 +12,7 @@ import Speech
 /// is set to `.processLifetime`, which is this backend's version of the
 /// keep-warm policy (latency > memory, per the phase-3 spec).
 @available(macOS 26.0, *)
-public actor SpeechAnalyzerBackend: TranscriptionBackend {
+public actor SpeechAnalyzerBackend: StreamingTranscriptionBackend {
     /// The locale the analyzer was prepared for; nil until `load` succeeds.
     private var loadedLocale: Locale?
 
@@ -117,6 +117,13 @@ public actor SpeechAnalyzerBackend: TranscriptionBackend {
         loadedLocale = nil
     }
 
+    public func startStreamingSession() async throws -> any StreamingSession {
+        guard let locale = loadedLocale else { throw TranscriptionError.modelNotLoaded }
+        return try await SpeechAnalyzerStreamingSession(
+            locale: locale, options: Self.analyzerOptions
+        )
+    }
+
     private static func makeTranscriber(locale: Locale) -> SpeechTranscriber {
         // Final results only — the overlay has no partial-text UI (yet).
         SpeechTranscriber(locale: locale, preset: .transcription)
@@ -125,7 +132,7 @@ public actor SpeechAnalyzerBackend: TranscriptionBackend {
     // MARK: - Audio plumbing
 
     /// Wraps our 16 kHz mono Float32 samples in an AVAudioPCMBuffer.
-    private static func pcmBuffer(from audio: FabCore.AudioBuffer) -> AVAudioPCMBuffer? {
+    static func pcmBuffer(from audio: FabCore.AudioBuffer) -> AVAudioPCMBuffer? {
         guard
             let format = AVAudioFormat(
                 commonFormat: .pcmFormatFloat32,
@@ -147,7 +154,7 @@ public actor SpeechAnalyzerBackend: TranscriptionBackend {
     }
 
     /// One-shot sample-rate/format conversion into what the analyzer wants.
-    private static func convert(
+    static func convert(
         _ buffer: AVAudioPCMBuffer,
         to format: AVAudioFormat
     ) -> AVAudioPCMBuffer? {
@@ -177,6 +184,131 @@ public actor SpeechAnalyzerBackend: TranscriptionBackend {
         }
         guard status != .error, conversionError == nil else { return nil }
         return output
+    }
+}
+
+/// One live utterance against SpeechAnalyzer: input stream held open,
+/// volatile results forwarded as partials, `finish()` = finalize wait.
+@available(macOS 26.0, *)
+actor SpeechAnalyzerStreamingSession: StreamingSession {
+    nonisolated let partials: AsyncStream<String>
+    private let partialsContinuation: AsyncStream<String>.Continuation
+
+    private let analyzer: SpeechAnalyzer
+    private let analyzerFormat: AVAudioFormat
+    private let input: AsyncStream<AnalyzerInput>.Continuation
+    private let analyzeTask: Task<CMTime?, Error>
+    private let collector: Task<String, Error>
+
+    /// Total samples fed, for the transcript's audioDuration.
+    private var fedSampleCount = 0
+    private var fedSampleRate: Double = AudioConstants.expectedSampleRate
+    private var ended = false
+
+    /// 16 kHz mono Float32 — what the capture pipeline produces.
+    private enum AudioConstants {
+        static let expectedSampleRate: Double = 16_000
+    }
+
+    init(locale: Locale, options: SpeechAnalyzer.Options) async throws {
+        // Volatile results on: partials are the point of a live session.
+        let transcriber = SpeechTranscriber(
+            locale: locale,
+            transcriptionOptions: [],
+            reportingOptions: [.volatileResults],
+            attributeOptions: []
+        )
+        analyzer = SpeechAnalyzer(modules: [transcriber], options: options)
+        guard
+            let format = await SpeechAnalyzer.bestAvailableAudioFormat(
+                compatibleWith: [transcriber]
+            )
+        else {
+            throw SpeechAnalyzerBackendError.audioConversionFailed
+        }
+        analyzerFormat = format
+
+        (partials, partialsContinuation) = AsyncStream.makeStream()
+
+        // Finalized pieces accumulate; the volatile tail is replaced on
+        // every non-final result. Each update emits the full string so far.
+        let continuation = partialsContinuation
+        collector = Task {
+            var pieces: [String] = []
+            var volatileTail = ""
+            for try await result in transcriber.results {
+                let piece = String(result.text.characters)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if result.isFinal {
+                    if !piece.isEmpty { pieces.append(piece) }
+                    volatileTail = ""
+                } else {
+                    volatileTail = piece
+                }
+                let current = (pieces + (volatileTail.isEmpty ? [] : [volatileTail]))
+                    .joined(separator: " ")
+                continuation.yield(current)
+            }
+            return pieces.joined(separator: " ")
+        }
+
+        let (inputSequence, inputBuilder) = AsyncStream<AnalyzerInput>.makeStream()
+        input = inputBuilder
+        let analyzerRef = analyzer
+        analyzeTask = Task {
+            try await analyzerRef.analyzeSequence(inputSequence)
+        }
+    }
+
+    func feed(_ samples: [Float]) {
+        guard !ended, !samples.isEmpty else { return }
+        let chunk = FabCore.AudioBuffer(
+            samples: samples, sampleRate: AudioConstants.expectedSampleRate
+        )
+        guard
+            let source = SpeechAnalyzerBackend.pcmBuffer(from: chunk),
+            let converted = SpeechAnalyzerBackend.convert(source, to: analyzerFormat)
+        else {
+            // A malformed chunk shouldn't kill the utterance; skip it and
+            // let the batch fallback cover any resulting quality gap.
+            return
+        }
+        fedSampleCount += samples.count
+        input.yield(AnalyzerInput(buffer: converted))
+    }
+
+    func finish() async throws -> Transcript {
+        guard !ended else { throw TranscriptionError.modelNotLoaded }
+        ended = true
+        input.finish()
+        do {
+            let lastSampleTime = try await analyzeTask.value
+            if let lastSampleTime {
+                try await analyzer.finalizeAndFinish(through: lastSampleTime)
+            } else {
+                await analyzer.cancelAndFinishNow()
+            }
+        } catch {
+            collector.cancel()
+            await analyzer.cancelAndFinishNow()
+            partialsContinuation.finish()
+            throw error
+        }
+        let text = try await collector.value
+        partialsContinuation.finish()
+        return Transcript(
+            text: text,
+            audioDuration: Double(fedSampleCount) / fedSampleRate
+        )
+    }
+
+    func cancel() async {
+        guard !ended else { return }
+        ended = true
+        input.finish()
+        collector.cancel()
+        await analyzer.cancelAndFinishNow()
+        partialsContinuation.finish()
     }
 }
 
