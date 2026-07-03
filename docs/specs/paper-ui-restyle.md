@@ -38,7 +38,9 @@ Static namespace, no state:
   adaptive (near-black on light, warm white on dark).
 - `accent` — the single blue (≈ system blue tuned to the reference).
 - `hairline` — border stroke color (ink at low opacity).
-- `cardRadius` (12) and `pillShadow` constants.
+- `cardRadius` (12). (Pill shadow values live inline at their single
+  consumer in `CapsuleChrome` — not worth a token until a second consumer
+  exists.)
 
 ### Overlay pill (`OverlayController.swift`)
 

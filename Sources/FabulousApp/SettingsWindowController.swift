@@ -1,5 +1,4 @@
 import AppKit
-import FabCore
 import SwiftUI
 
 @MainActor
