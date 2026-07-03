@@ -194,12 +194,15 @@ private struct GeneralSettingsPane: View {
                         Button("Add", action: addVocabularyTerm)
                             .disabled(newVocabularyTerm.trimmingCharacters(in: .whitespaces).isEmpty)
                     }
-                    ForEach(Array(store.llmVocabulary.enumerated()), id: \.offset) { index, term in
+                    // Terms are deduplicated on add, so the string is a
+                    // stable identity — unlike offsets, which shift on
+                    // removal and confuse the diff.
+                    ForEach(store.llmVocabulary, id: \.self) { term in
                         HStack {
                             Text(term)
                             Spacer()
                             Button {
-                                store.llmVocabulary.remove(at: index)
+                                store.llmVocabulary.removeAll { $0 == term }
                             } label: {
                                 Image(systemName: "minus.circle.fill")
                                     .foregroundStyle(.secondary)
