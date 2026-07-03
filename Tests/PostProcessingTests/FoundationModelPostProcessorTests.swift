@@ -40,6 +40,16 @@ struct FoundationModelPostProcessorTests {
         #expect(try await p.process("um ship it") == "Ship it.")
     }
 
+    @Test func edgeSpacesFromModelAreStripped() async throws {
+        let p = processor(.reply("  Ship it. "))
+        #expect(try await p.process("um ship it") == "Ship it.")
+    }
+
+    @Test func edgeNewlinesFromCommandsSurvive() async throws {
+        let p = processor(.reply("ship it\n\n"))
+        #expect(try await p.process("ship it new paragraph") == "ship it\n\n")
+    }
+
     @Test func modelErrorFallsBackToRawText() async throws {
         let p = processor(.fail)
         #expect(try await p.process("um ship it") == "um ship it")

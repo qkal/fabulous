@@ -51,7 +51,7 @@ public actor FoundationModelPostProcessor: ContextualTextPostProcessor {
                 // empty output on anything else is a model failure.
                 return Self.endsWithScratchThat(text) ? "" : text
             }
-            return cleaned
+            return Self.strippingEdgeSpaces(cleaned)
         } catch {
             NSLog("fabulous: LLM cleanup failed, using raw transcript: \(error)")
             return text
@@ -67,6 +67,21 @@ public actor FoundationModelPostProcessor: ContextualTextPostProcessor {
         text.lowercased()
             .trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
             .hasSuffix("scratch that")
+    }
+
+    /// Drops stray spaces/tabs the model wraps around its reply, but keeps
+    /// edge newlines: an utterance starting or ending with "new line"/
+    /// "new paragraph" legitimately produces them, and injecting them is
+    /// the point.
+    static func strippingEdgeSpaces(_ text: String) -> String {
+        var out = text
+        while let first = out.first, first == " " || first == "\t" {
+            out.removeFirst()
+        }
+        while let last = out.last, last == " " || last == "\t" {
+            out.removeLast()
+        }
+        return out
     }
 
     private struct TimeoutError: Error {}
