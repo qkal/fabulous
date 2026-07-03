@@ -49,9 +49,11 @@ restore moves to a stored task:
   restore.
 - `inject()` cancels any pending `restoreTask` at entry. A second
   dictation within the 300 ms window therefore skips dictation-1's
-  restore, and the clipboard keeps the newest content — same class of
-  quirk the synchronous code has (a user copy inside the window wins);
-  no transcript is ever lost.
+  restore; dictation 2 then saves transcript-1 as its own restore value,
+  so the clipboard can end up holding transcript-1 rather than the user's
+  pre-dictation content. In practice the window is unreachable (a second
+  dictation takes seconds of recording + transcription), and no transcript
+  is ever lost.
 - Accepted quirk: quitting the app inside the 300 ms window also skips
   the restore (the task dies with the process). Negligible — the old
   code merely shrank that window to zero, and the clipboard holds the

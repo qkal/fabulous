@@ -18,6 +18,9 @@ public final class TextInjector {
     /// Pending clipboard restore from the last paste. Cancelled when a new
     /// injection starts, so a rapid follow-up dictation can't have its
     /// freshly-written transcript clobbered by the previous restore.
+    /// Paths that skip inject() (e.g. the app-level clipboard safety net)
+    /// are still safe: any pasteboard write bumps changeCount, which
+    /// defuses a pending restore.
     private var restoreTask: Task<Void, Never>?
 
     public init(selector: StrategySelector = StrategySelector()) {
@@ -112,6 +115,7 @@ public final class TextInjector {
         if let saved {
             restoreTask = Task {
                 do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
+                guard !Task.isCancelled else { return }
                 let pasteboard = NSPasteboard.general
                 if pasteboard.changeCount == ourChangeCount {
                     pasteboard.clearContents()

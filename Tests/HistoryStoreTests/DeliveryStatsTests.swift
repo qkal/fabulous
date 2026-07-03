@@ -64,12 +64,12 @@ import Testing
             methods: [
                 .init(method: .axInsert, count: 60, p50DeliveryMs: 8),
                 .init(method: .paste, count: 29, p50DeliveryMs: 58),
-                .init(method: .keystrokes, count: 8, p50DeliveryMs: 210),
+                .init(method: .keystrokes, count: 8, p50DeliveryMs: 1200),
                 .init(method: .safetyNet, count: 3, p50DeliveryMs: 1),
             ]
         )
         #expect(stats.menuSummary
-            == "Inject ax 60% 8 ms · paste 29% 58 ms · keys 8% 210 ms · net 3%")
+            == "Inject ax 60% 8 ms · paste 29% 58 ms · keys 8% 1.2 s · net 3%")
     }
 
     @Test func menuSummaryOmitsP50ForSafetyNetOnly() {
