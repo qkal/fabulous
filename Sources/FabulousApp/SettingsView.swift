@@ -2,6 +2,7 @@ import AudioCapture
 import FabCore
 import HistoryStore
 import HotkeyEngine
+import PostProcessing
 import SwiftUI
 
 /// Closures into AppController — the views stay free of engine wiring.
@@ -100,6 +101,11 @@ private struct GeneralSettingsPane: View {
     @State private var devices: [CaptureDevice] = []
     @State private var launchAtLogin = false
     @State private var launchAtLoginError: String?
+    @State private var newVocabularyTerm = ""
+
+    private var cleanupAvailability: PostProcessingAvailability {
+        PostProcessingAvailability.current
+    }
 
     var body: some View {
         Form {
@@ -169,6 +175,44 @@ private struct GeneralSettingsPane: View {
                 }
             }
 
+            Section("Clean up with Apple Intelligence") {
+                Toggle("Clean up transcripts", isOn: $store.llmCleanupEnabled)
+                    .disabled(cleanupAvailability != .available)
+                if let explanation = cleanupAvailability.explanation {
+                    Text(explanation)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Removes filler words, fixes punctuation, and understands “new paragraph”, “scratch that”, and “quote … unquote”. Runs on this Mac — nothing leaves it. Adds a moment before text appears.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                if store.llmCleanupEnabled {
+                    HStack {
+                        TextField("Add a name or term…", text: $newVocabularyTerm)
+                            .onSubmit(addVocabularyTerm)
+                        Button("Add", action: addVocabularyTerm)
+                            .disabled(newVocabularyTerm.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+                    ForEach(Array(store.llmVocabulary.enumerated()), id: \.offset) { index, term in
+                        HStack {
+                            Text(term)
+                            Spacer()
+                            Button {
+                                store.llmVocabulary.remove(at: index)
+                            } label: {
+                                Image(systemName: "minus.circle.fill")
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                    }
+                    Text("Spellings the cleanup pass should prefer — names, jargon, product terms.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             Section {
                 Toggle("Launch fabulous at login", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { _, newValue in
@@ -215,6 +259,13 @@ private struct GeneralSettingsPane: View {
         captureSession.end()
         capturing = false
         actions.setHotkeyCapturing(false)
+    }
+
+    private func addVocabularyTerm() {
+        let term = newVocabularyTerm.trimmingCharacters(in: .whitespaces)
+        guard !term.isEmpty, !store.llmVocabulary.contains(term) else { return }
+        store.llmVocabulary.append(term)
+        newVocabularyTerm = ""
     }
 }
 
@@ -427,6 +478,12 @@ private struct HistorySettingsPane: View {
                         HStack(alignment: .top) {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(entry.text).lineLimit(2)
+                                if let raw = entry.rawText {
+                                    Text("Original: \(raw)")
+                                        .font(.caption)
+                                        .foregroundStyle(.tertiary)
+                                        .lineLimit(1)
+                                }
                                 Text(entry.createdAt.formatted(date: .abbreviated, time: .shortened))
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
