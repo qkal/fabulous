@@ -63,10 +63,13 @@ public actor AudioRecorder {
         }
     }
 
-    /// Stops capturing and returns the recorded audio, silence-trimmed.
-    /// Returns an empty buffer if nothing above the VAD threshold was heard.
+    /// Stops capturing and returns the recorded audio. With `trimming` (the
+    /// default) leading/trailing silence is VAD-trimmed; `trimming: false`
+    /// returns the raw buffer — the streaming path never uses the trimmed
+    /// audio, and running the VAD at release would reintroduce the latency
+    /// streaming removes. Returns an empty buffer if nothing was heard.
     /// (Qualified name: CoreAudio declares an unrelated `AudioBuffer`.)
-    public func stop() -> FabCore.AudioBuffer {
+    public func stop(trimming: Bool = true) -> FabCore.AudioBuffer {
         guard isRecording else {
             return FabCore.AudioBuffer(samples: [], sampleRate: Self.targetSampleRate)
         }
@@ -77,10 +80,28 @@ public actor AudioRecorder {
 
         var raw = tapProcessor?.drain() ?? []
         tapProcessor = nil
+        guard trimming else {
+            return FabCore.AudioBuffer(samples: raw, sampleRate: Self.targetSampleRate)
+        }
         let trimmed = vad.trimSilence(raw, sampleRate: Self.targetSampleRate)
         // Zero the untrimmed copy; the caller owns (and zeroes) the trimmed one.
         for i in raw.indices { raw[i] = 0 }
         return FabCore.AudioBuffer(samples: trimmed, sampleRate: Self.targetSampleRate)
+    }
+
+    /// Samples accumulated since the last poll, for feeding a streaming
+    /// transcription session while recording. Empty when not recording.
+    public func pollNewSamples() -> [Float] {
+        tapProcessor?.drainNew() ?? []
+    }
+
+    /// VAD-trims an already-captured buffer — the lazy trim for the batch
+    /// fallback after an untrimmed `stop`.
+    public func trimSilence(_ audio: FabCore.AudioBuffer) -> FabCore.AudioBuffer {
+        FabCore.AudioBuffer(
+            samples: vad.trimSilence(audio.samples, sampleRate: audio.sampleRate),
+            sampleRate: audio.sampleRate
+        )
     }
 
     /// Input level of the most recent buffer (0…1-ish RMS), for a level meter.

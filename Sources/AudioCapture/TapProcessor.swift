@@ -11,6 +11,8 @@ import Foundation
 final class TapProcessor: @unchecked Sendable {
     private let lock = NSLock()
     private var samples: [Float] = []
+    /// Index of the first sample not yet returned by `drainNew()`.
+    private var newCursor = 0
     private var latestRMS: Float = 0
 
     // Tap-thread-only state (no lock needed).
@@ -57,8 +59,21 @@ final class TapProcessor: @unchecked Sendable {
         lock.lock()
         let drained = samples
         samples = []
+        newCursor = 0
         lock.unlock()
         return drained
+    }
+
+    /// Returns samples accumulated since the previous `drainNew()` call
+    /// without removing anything — `drain()` still sees the full utterance.
+    /// Feeds the live transcription session while recording.
+    func drainNew() -> [Float] {
+        lock.lock()
+        defer { lock.unlock() }
+        guard newCursor < samples.count else { return [] }
+        let fresh = Array(samples[newCursor...])
+        newCursor = samples.count
+        return fresh
     }
 
     /// RMS level of the most recent buffer, for the future level meter UI.
