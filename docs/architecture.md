@@ -219,9 +219,11 @@ loop).
   bundle (Info.plist, PkgInfo, resource bundles, codesign). Tradeoff: bundle
   assembly is ours to maintain; acceptable for one small script.
 - **No sandbox in v1**: CGEventTap and cross-app AX APIs are the product;
-  they don't work sandboxed. Mitigation: Developer ID + notarization +
-  hardened runtime for distribution, minimal entitlements (audio-input only),
-  no network beyond model downloads.
+  they don't work sandboxed. Currently distributed unsigned (ad-hoc signed).
+  Developer ID + notarization + hardened runtime remains the path if a
+  certificate is ever obtained; scripts/build.sh already supports it via
+  CODESIGN_IDENTITY. Minimal entitlements (audio-input only), no network
+  beyond model downloads.
 - **arm64 only**: `swift build --arch arm64`; no Intel slice, no Rosetta.
 - **Active (not listen-only) event tap**: avoids needing Input Monitoring on
   top of Accessibility. The tap passes all events through untouched.

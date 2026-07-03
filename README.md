@@ -104,8 +104,8 @@ Everything is configurable in Settings (menu bar icon → Settings…):
 - Audio lives in memory only and is zeroed after transcription.
 - The only network access is the explicit model download from Hugging Face.
 - No sandbox in v1 — the app needs event taps and cross-app Accessibility
-  APIs, which don't fit the App Store sandbox. Distribution is Developer ID
-  signed + notarized outside the App Store. Tradeoff documented in
+  APIs, which don't fit the App Store sandbox. Distribution is unsigned
+  (ad-hoc signed only, no Apple Developer certificate). Tradeoff documented in
   [docs/architecture.md](docs/architecture.md).
 
 ## Out of scope (v1)
