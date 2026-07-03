@@ -66,6 +66,8 @@ struct OnboardingView: View {
         }
         .padding(24)
         .frame(width: 460)
+        .background(PaperTheme.paper)
+        .tint(PaperTheme.accent)
         .task {
             // Live status: Accessibility toggles flip in System Settings with
             // no notification API, so poll while the window is up.
@@ -99,6 +101,13 @@ struct OnboardingView: View {
             }
         }
         .padding(12)
-        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+        .background(
+            RoundedRectangle(cornerRadius: PaperTheme.cardRadius)
+                .fill(PaperTheme.card)
+                .overlay(
+                    RoundedRectangle(cornerRadius: PaperTheme.cardRadius)
+                        .strokeBorder(PaperTheme.hairline, lineWidth: 1)
+                )
+        )
     }
 }

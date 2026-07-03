@@ -674,6 +674,8 @@ final class AppController {
         let window = NSWindow(contentViewController: NSHostingController(rootView: view))
         window.title = "fabulous"
         window.styleMask = [.titled, .closable]
+        window.titlebarAppearsTransparent = true
+        window.backgroundColor = PaperTheme.paperNSColor
         window.isReleasedWhenClosed = false
         window.center()
         onboardingWindow = window
