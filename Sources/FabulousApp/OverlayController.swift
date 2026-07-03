@@ -18,6 +18,9 @@ final class OverlayModel {
     /// Live partial transcript while streaming (empty = hidden). Raw engine
     /// output — post-processing only runs on the final text.
     var partialText: String = ""
+    /// Active theme, pushed by AppController (the overlay has no store
+    /// binding). Set before the first show and on every theme change.
+    var theme: Theme = .paper
     /// Drives the pop-in/out animation; the panel outlives the transition.
     var visible: Bool = false
 }
@@ -60,6 +63,11 @@ final class OverlayController {
     func updatePartial(_ text: String) {
         guard model.phase == .recording else { return }
         model.partialText = text
+    }
+
+    /// Applies a theme; safe to call while the pill is visible.
+    func applyTheme(_ theme: Theme) {
+        model.theme = theme
     }
 
     /// Shows a transient notice in the capsule, then hides. Used by the
@@ -162,7 +170,7 @@ private struct OverlayView: View {
                         if !model.partialText.isEmpty {
                             Text(model.partialText)
                                 .font(.caption)
-                                .foregroundStyle(PaperTheme.inkSecondary)
+                                .foregroundStyle(model.theme.inkSecondary)
                                 .lineLimit(1)
                                 .truncationMode(.head)   // tail of speech wins
                                 .frame(maxWidth: 280)
@@ -179,10 +187,10 @@ private struct OverlayView: View {
                 CapsuleChrome {
                     HStack(spacing: 8) {
                         Image(systemName: "exclamationmark.circle.fill")
-                            .foregroundStyle(PaperTheme.accent)
+                            .foregroundStyle(model.theme.accent)
                         Text(text)
                             .font(.caption)
-                            .foregroundStyle(PaperTheme.ink.opacity(0.9))
+                            .foregroundStyle(model.theme.ink.opacity(0.9))
                             .lineLimit(2)
                             .multilineTextAlignment(.leading)
                     }
@@ -190,7 +198,6 @@ private struct OverlayView: View {
                 }
             }
         }
-        // Pop-in/out: rises from below with a spring, blurring away on exit.
         .scaleEffect(model.visible ? 1 : 0.6, anchor: .bottom)
         .offset(y: model.visible ? 0 : 16)
         .opacity(model.visible ? 1 : 0)
@@ -198,41 +205,68 @@ private struct OverlayView: View {
         .animation(.spring(response: 0.34, dampingFraction: 0.7), value: model.visible)
         .frame(width: 360, height: 72)
         .animation(.easeOut(duration: 0.18), value: model.phase)
-        .tint(PaperTheme.accent)
+        .environment(\.theme, model.theme)
+        .tint(model.theme.accent)
     }
 
 }
 
-/// The capsule shell: near-black glass with a whisper of a rim line — and
-/// it breathes. `energy` (the live voice level) swells the capsule a few
-/// percent, brightens the rim, and wakes a soft halo, so the whole object
-/// feels alive while you speak without a single extra ornament.
+/// The capsule shell — frosted paper or the original black glass, chosen by
+/// the theme. `energy` (the live voice level) swells the capsule a few
+/// percent and wakes the rim/halo so the object feels alive while you speak.
 private struct CapsuleChrome<Content: View>: View {
     var energy: CGFloat = 0
     @ViewBuilder let content: Content
 
+    @Environment(\.theme) private var theme
+
     var body: some View {
+        Group {
+            switch theme.pillStyle {
+            case .frosted:
+                padded
+                    .background {
+                        ZStack {
+                            Capsule(style: .continuous)
+                                .fill(.ultraThinMaterial)
+                            // Warm paper tint over the material so the frost
+                            // reads paper, not gray.
+                            Capsule(style: .continuous)
+                                .fill(theme.paper.opacity(0.42))
+                            Capsule(style: .continuous)
+                                .strokeBorder(
+                                    theme.ink.opacity(0.14 + 0.25 * energy),
+                                    lineWidth: 1
+                                )
+                        }
+                    }
+                    .scaleEffect(1 + energy * 0.045)
+                    .shadow(color: .black.opacity(0.10 + 0.10 * energy), radius: 14, y: 4)
+            case .glass:
+                padded
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(.black.opacity(0.8))
+                            .overlay(
+                                Capsule(style: .continuous)
+                                    .strokeBorder(
+                                        .white.opacity(0.14 + 0.3 * energy),
+                                        lineWidth: 1
+                                    )
+                            )
+                    )
+                    .scaleEffect(1 + energy * 0.045)
+                    .shadow(color: theme.pillGlow.opacity(0.3 * energy), radius: 12, y: 0)
+                    .shadow(color: .black.opacity(0.4), radius: 9, y: 3)
+            }
+        }
+        .animation(.easeOut(duration: 0.12), value: energy)
+    }
+
+    private var padded: some View {
         content
             .padding(.horizontal, 16)
             .padding(.vertical, 9)
-            .background {
-                ZStack {
-                    Capsule(style: .continuous)
-                        .fill(.ultraThinMaterial)
-                    // Warm paper tint over the material so the frost reads
-                    // paper, not gray.
-                    Capsule(style: .continuous)
-                        .fill(PaperTheme.paper.opacity(0.42))
-                    Capsule(style: .continuous)
-                        .strokeBorder(
-                            PaperTheme.ink.opacity(0.14 + 0.25 * energy),
-                            lineWidth: 1
-                        )
-                }
-            }
-            .scaleEffect(1 + energy * 0.045)
-            .shadow(color: .black.opacity(0.10 + 0.10 * energy), radius: 14, y: 4)
-            .animation(.easeOut(duration: 0.12), value: energy)
     }
 }
 
@@ -244,6 +278,8 @@ private struct SiriWave: View {
     var level: Float
     /// Recording waves surge with voice; a calm wave just idles.
     var energetic: Bool
+
+    @Environment(\.theme) private var theme
 
     private static let barCount = 17
 
@@ -282,7 +318,7 @@ private struct SiriWave: View {
                     let heat = amplitude / max(idle + surge, 0.01)
                     context.fill(
                         Path(roundedRect: rect, cornerRadius: barWidth / 2),
-                        with: .color(PaperTheme.ink.opacity(0.40 + 0.60 * min(1, heat)))
+                        with: .color(theme.ink.opacity(0.40 + 0.60 * min(1, heat)))
                     )
                 }
             }
@@ -294,6 +330,8 @@ private struct SiriWave: View {
 /// smoothly around a faint track. One element, no text — the classic shape,
 /// drawn with the overlay's own light.
 private struct CometSpinner: View {
+    @Environment(\.theme) private var theme
+
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { timeline in
             let t = timeline.date.timeIntervalSinceReferenceDate
@@ -302,15 +340,15 @@ private struct CometSpinner: View {
             ZStack {
                 // The faint full track grounds the motion.
                 Circle()
-                    .stroke(PaperTheme.ink.opacity(0.18), lineWidth: 2.5)
+                    .stroke(theme.ink.opacity(0.18), lineWidth: 2.5)
                 // The comet: a gradient tail ending in the blue accent head.
                 Circle()
                     .trim(from: 0.08, to: 0.42)
                     .stroke(
                         AngularGradient(
                             gradient: Gradient(colors: [
-                                PaperTheme.accent.opacity(0),
-                                PaperTheme.accent,
+                                theme.accent.opacity(0),
+                                theme.accent,
                             ]),
                             center: .center,
                             startAngle: .degrees(0.08 * 360),
