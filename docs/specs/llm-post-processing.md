@@ -1,6 +1,6 @@
 # LLM Post-Processing (Apple Foundation Models)
 
-Status: designed 2026-07-03, not yet implemented.
+Status: implemented 2026-07-03 (this plan: docs/superpowers/plans/2026-07-03-llm-post-processing.md).
 
 ## Goal
 
