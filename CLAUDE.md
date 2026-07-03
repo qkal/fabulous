@@ -144,7 +144,7 @@ Silero VAD with EnergyVAD fallback, end-to-end pipeline tests
 "streaming" (docs/specs/phase-5-streaming.md): SpeechAnalyzer sessions
 fed live during recording, overlay partials, batch fallback, `streamed`
 metrics column; paper UI restyle (docs/specs/paper-ui-restyle.md): PaperTheme
-tokens, frosted paper pill, paper settings/onboarding.
+tokens, frosted paper pill, paper settings/onboarding, theme switcher (Paper/Glass + System/Light/Dark appearance, docs/specs/theme-switcher.md).
 
 Not yet built: Parakeet/FluidAudio backend (only if SpeechAnalyzer
 disappoints), per-app injection override settings UI, LLM post-processing
