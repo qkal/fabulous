@@ -177,7 +177,7 @@ private struct GeneralSettingsPane: View {
 
             Section("Clean up with Apple Intelligence") {
                 Toggle("Clean up transcripts", isOn: $store.llmCleanupEnabled)
-                    .disabled(cleanupAvailability != .available)
+                    .disabled(cleanupAvailability != .available && !store.llmCleanupEnabled)
                 if let explanation = cleanupAvailability.explanation {
                     Text(explanation)
                         .font(.footnote)

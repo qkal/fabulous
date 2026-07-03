@@ -41,8 +41,8 @@ final class AppController {
     private let injector = TextInjector()
     private let hotkey = HotkeyMonitor()
     private let modelManager = ModelManager()
-    // Rebuilt from the settings' replacement entries; the (v1.5) LLM cleanup
-    // pass slots in here as another pipeline stage.
+    // Rebuilt from the settings' replacement entries (deterministic replacements).
+    // LLM cleanup (if enabled) runs first in `llmProcessor`, then this stage.
     private var postProcessor: any TextPostProcessor = PassthroughPostProcessor()
     /// LLM cleanup stage; nil when disabled or the model is unavailable.
     /// Runs before `postProcessor` so deterministic replacements win.
@@ -500,6 +500,12 @@ final class AppController {
             let transcribedAt = clock.now
             let rawText = transcript.text
             var cleaned = rawText
+            // The model may have become available since launch (e.g. it was
+            // still downloading) — cheap re-check so cleanup doesn't stay
+            // dead until restart.
+            if llmProcessor == nil, settings.llmCleanupEnabled {
+                rebuildLLMProcessor()
+            }
             if let llmProcessor {
                 await llmProcessor.setAppContext(name: recordingTargetAppName())
                 // The LLM stage never throws — it falls back to raw internally.
