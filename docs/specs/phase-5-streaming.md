@@ -89,7 +89,10 @@ runtime conformance check (`backend as? StreamingTranscriptionBackend`).
   (every ~5th tick, ≈250 ms): `pollNewSamples()` → `session.feed()`. A
   separate task consumes `session.partials`, hops to the main actor, updates
   the overlay. 250 ms of buffering is noise next to the seconds saved.
-- **finishRecording:** stop the recorder *untrimmed*. If audio is shorter
+- **finishRecording:** with a live session, first feed the final tail — one
+  drain of new samples (`pollNewSamples()`) fed to the session before the
+  recorder is stopped, so the last syllables aren't clipped. Then stop the
+  recorder *untrimmed*. If audio is shorter
   than `minimumUtteranceDuration`, `cancel()` the session (don't leak it)
   and bail as today. Otherwise, with a live session, `finish()` and use its
   transcript — VAD trim and batch `transcribe()` both skipped. If `finish()`
@@ -135,6 +138,7 @@ post-processing. That is expected and normal for dictation UIs.
 | Session creation throws at record start | Log; record as batch (silent degrade) |
 | `feed`/analyzer error mid-utterance | Session marks itself dead; `finish()` throws; batch fallback |
 | `finish()` throws | Batch transcribe of the full VAD-trimmed buffer |
+| `finish()` returns empty text for non-trivial audio | Batch fallback (defense-in-depth); a swallowed utterance is rescued, genuine silence just re-returns empty |
 | Esc during recording | `cancel()` the session; existing cancel flow |
 | Utterance below `minimumUtteranceDuration` | `cancel()` the session; bail silently as today |
 | `feed` after finish/cancel began | Session ignores it (feed timer races the stop path) |
@@ -150,8 +154,12 @@ path that exists today, including `safetyNet` on injection failure.
 - **PipelineTests (always run):** fake `StreamingTranscriptionBackend` —
   chunks arrive via `feed` in order; `finish()` text is used and batch
   transcribe is *not* called; session-creation failure and `finish()` failure
-  both fall back to batch; Esc cancels the session; short utterance cancels
-  the session; `feed` after finish is ignored.
+  both fall back to batch; an empty `finish()` transcript falls back to batch
+  (defense-in-depth, `emptyStreamedTranscriptFallsBackToBatch`); `feed` after
+  finish is ignored. The helper-seam cancel behavior (a dead session cancelled
+  on finish failure) is covered by `finishFailureFallsBackToBatch`. Esc-cancels
+  and short-utterance-cancels live in `AppController` wiring with no test
+  harness; they are verified manually and by the real-engine test below.
 - **TapProcessor unit tests:** `drainNew` cursor — incremental drains sum to
   `drain()`, cursor survives converter rebuild (config change).
 - **HistoryStore tests:** `v3` migration adds `streamed`; old rows read back

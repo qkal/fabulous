@@ -75,6 +75,21 @@ import Testing
         #expect(await session.cancelled)
     }
 
+    @Test func emptyStreamedTranscriptFallsBackToBatch() async throws {
+        let session = FakeSession(
+            finishResult: .success(Transcript(text: "", audioDuration: 1))
+        )
+        let (transcript, streamed) = try await StreamingDictation.finalTranscript(
+            session: session,
+            fallback: { Self.batchTranscript() }
+        )
+        #expect(transcript.text == "batch text")
+        #expect(!streamed)
+        // finish() succeeded, so the session is not cancelled.
+        #expect(await session.finished)
+        #expect(await !session.cancelled)
+    }
+
     @Test func missingSessionFallsBackToBatch() async throws {
         let (transcript, streamed) = try await StreamingDictation.finalTranscript(
             session: nil,

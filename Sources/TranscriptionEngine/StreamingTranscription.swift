@@ -32,8 +32,11 @@ public protocol StreamingTranscriptionBackend: TranscriptionBackend {
 }
 
 /// The fallback invariant in one place: use the streaming result when the
-/// session survived, otherwise run the batch path — a transcript is never
-/// silently lost.
+/// session survived and produced text, otherwise run the batch path — a
+/// transcript is never silently lost. If `finish()` succeeds but returns
+/// empty text, we still fall back (defense-in-depth): genuine silence costs
+/// one extra batch pass that also returns empty, while a swallowed utterance
+/// gets rescued. No `cancel()` is needed there — `finish()` already succeeded.
 public enum StreamingDictation {
     public static func finalTranscript(
         session: (any StreamingSession)?,
@@ -41,7 +44,12 @@ public enum StreamingDictation {
     ) async throws -> (transcript: Transcript, streamed: Bool) {
         if let session {
             do {
-                return (try await session.finish(), true)
+                let transcript = try await session.finish()
+                if !transcript.text.isEmpty {
+                    return (transcript, true)
+                }
+                // Empty streamed text: fall through to batch (no cancel —
+                // finish succeeded). The caller still has the full buffer.
             } catch {
                 await session.cancel()
                 // Fall through to batch; the caller still has the full buffer.

@@ -361,7 +361,11 @@ final class AppController {
         sessionStartTask = Task { [weak self] in
             do {
                 let session = try await streamingBackend.startStreamingSession()
-                guard let self, state == .recording else {
+                // Cancellation check matters: takeStreamingSession() cancels
+                // then awaits this task while state is still .recording. A
+                // session landing in that window would be stored but never
+                // fed, then finish() returns empty and the utterance is lost.
+                guard let self, !Task.isCancelled, state == .recording else {
                     await session.cancel()
                     return
                 }
@@ -413,9 +417,22 @@ final class AppController {
         stopLevelUpdates()
         if settings.soundCuesEnabled { SoundCues.recordingStopped() }
         let session = await takeStreamingSession()
+        // Feed the final audio tail — samples captured since the last 250 ms
+        // feed tick — so the session hears the last syllables before we stop.
+        if let session {
+            let tail = await recorder.pollNewSamples()
+            if !tail.isEmpty { await session.feed(tail) }
+        }
         // Streaming path: stop untrimmed — the trimmed buffer would go
         // unused and Silero at release costs exactly the latency this
         // phase removes. Trim lazily only if we fall back to batch.
+        //
+        // `audioIsRaw` records whether stop returned an untrimmed buffer: it
+        // did iff a session existed. The batch fallback trims only when raw;
+        // when session == nil the buffer is already VAD-trimmed and a second
+        // pass would recharge latency and re-shave padding (Whisper would hear
+        // different audio than the pre-branch behaviour).
+        let audioIsRaw = session != nil
         var audio = await recorder.stop(trimming: session == nil)
         defer { audio.zero() }
         let stoppedAt = clock.now
@@ -434,12 +451,21 @@ final class AppController {
             let (transcript, streamed) = try await StreamingDictation.finalTranscript(
                 session: session,
                 fallback: { [recorder] in
-                    var trimmed = await recorder.trimSilence(capturedAudio)
-                    defer { trimmed.zero() }
-                    guard !trimmed.isEmpty else {
+                    // Raw buffer (a session existed at stop) still needs its
+                    // one VAD pass; a pre-trimmed buffer is used as-is — the
+                    // recorder already returns empty when VAD heard nothing.
+                    if audioIsRaw {
+                        var trimmed = await recorder.trimSilence(capturedAudio)
+                        defer { trimmed.zero() }
+                        guard !trimmed.isEmpty else {
+                            return Transcript(text: "", audioDuration: 0)
+                        }
+                        return try await batchBackend.transcribe(trimmed, language: nil)
+                    }
+                    guard !capturedAudio.isEmpty else {
                         return Transcript(text: "", audioDuration: 0)
                     }
-                    return try await batchBackend.transcribe(trimmed, language: nil)
+                    return try await batchBackend.transcribe(capturedAudio, language: nil)
                 }
             )
             let transcribedAt = clock.now

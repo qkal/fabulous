@@ -125,7 +125,8 @@ public actor SpeechAnalyzerBackend: StreamingTranscriptionBackend {
     }
 
     private static func makeTranscriber(locale: Locale) -> SpeechTranscriber {
-        // Final results only — the overlay has no partial-text UI (yet).
+        // Final results only — batch transcription has no consumer for
+        // volatile partials; the streaming session (below) opts into them.
         SpeechTranscriber(locale: locale, preset: .transcription)
     }
 
@@ -202,7 +203,7 @@ actor SpeechAnalyzerStreamingSession: StreamingSession {
 
     /// Total samples fed, for the transcript's audioDuration.
     private var fedSampleCount = 0
-    private var fedSampleRate: Double = AudioConstants.expectedSampleRate
+    private let fedSampleRate: Double = AudioConstants.expectedSampleRate
     private var ended = false
 
     /// 16 kHz mono Float32 — what the capture pipeline produces.
