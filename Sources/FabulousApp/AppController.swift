@@ -53,6 +53,12 @@ final class AppController {
     private let settingsWindow = SettingsWindowController()
     private var onboardingWindow: NSWindow?
     private var levelTask: Task<Void, Never>?
+    /// Live streaming session for the current utterance (Apple Speech only).
+    private var streamingSession: (any StreamingSession)?
+    /// Creates the session off the critical path of `beginRecording`.
+    private var sessionStartTask: Task<Void, Never>?
+    /// Forwards session partials to the overlay.
+    private var partialsTask: Task<Void, Never>?
     private var history: HistoryStore?
 
     private(set) var lastTranscript: String?
@@ -337,9 +343,38 @@ final class AppController {
             state = .recording
             overlay.showRecording()
             startLevelUpdates()
+            startStreamingSessionIfAvailable()
             if settings.soundCuesEnabled { SoundCues.recordingStarted() }
         } catch {
             await flashFailure("Couldn't start recording: \(error)")
+        }
+    }
+
+    /// Opens a live session when the selected engine supports it. Runs
+    /// concurrently so recording start is never delayed; samples accumulate
+    /// in the tap and the first feed catches up via the drainNew cursor.
+    /// Failure is silent — the batch path is untouched and always works.
+    private func startStreamingSessionIfAvailable() {
+        guard settings.transcriptionEngine == .appleSpeech,
+              let streamingBackend = backend as? any StreamingTranscriptionBackend
+        else { return }
+        sessionStartTask = Task { [weak self] in
+            do {
+                let session = try await streamingBackend.startStreamingSession()
+                guard let self, state == .recording else {
+                    await session.cancel()
+                    return
+                }
+                streamingSession = session
+                partialsTask = Task { [weak self] in
+                    for await partial in session.partials {
+                        guard !Task.isCancelled else { return }
+                        self?.overlay.updatePartial(partial)
+                    }
+                }
+            } catch {
+                NSLog("fabulous: streaming session unavailable, batch path (\(error))")
+            }
         }
     }
 
@@ -348,6 +383,7 @@ final class AppController {
         guard state == .recording else { return }
         hotkey.interceptEscape = false
         stopLevelUpdates()
+        if let session = await takeStreamingSession() { await session.cancel() }
         var audio = await recorder.stop()
         audio.zero()
         state = .idle
@@ -355,16 +391,37 @@ final class AppController {
         if settings.soundCuesEnabled { SoundCues.recordingCancelled() }
     }
 
+    /// Stops the feed/partials machinery. Runs before any overlay
+    /// transition so a late partial can never repaint a hidden pill.
+    /// Returns the live session (if any) for finish/cancel; clears fields.
+    private func takeStreamingSession() async -> (any StreamingSession)? {
+        sessionStartTask?.cancel()
+        // Let a mid-flight start finish or observe cancellation before we
+        // read the field, so a session can't appear after we've looked.
+        await sessionStartTask?.value
+        sessionStartTask = nil
+        partialsTask?.cancel()
+        partialsTask = nil
+        let session = streamingSession
+        streamingSession = nil
+        return session
+    }
+
     private func finishRecording() async {
         let releasedAt = clock.now
         hotkey.interceptEscape = false
         stopLevelUpdates()
         if settings.soundCuesEnabled { SoundCues.recordingStopped() }
-        var audio = await recorder.stop()
+        let session = await takeStreamingSession()
+        // Streaming path: stop untrimmed — the trimmed buffer would go
+        // unused and Silero at release costs exactly the latency this
+        // phase removes. Trim lazily only if we fall back to batch.
+        var audio = await recorder.stop(trimming: session == nil)
         defer { audio.zero() }
         let stoppedAt = clock.now
 
         guard audio.duration >= minimumUtteranceDuration else {
+            if let session { await session.cancel() }
             state = .idle
             overlay.hide()
             return
@@ -372,9 +429,19 @@ final class AppController {
         state = .transcribing
         overlay.showTranscribing()
         do {
-            // The spinner is indeterminate; the backend's onProgress hook
-            // stays available for a future progress UI.
-            let transcript = try await backend.transcribe(audio, language: nil)
+            let capturedAudio = audio
+            let batchBackend = backend
+            let (transcript, streamed) = try await StreamingDictation.finalTranscript(
+                session: session,
+                fallback: { [recorder] in
+                    var trimmed = await recorder.trimSilence(capturedAudio)
+                    defer { trimmed.zero() }
+                    guard !trimmed.isEmpty else {
+                        return Transcript(text: "", audioDuration: 0)
+                    }
+                    return try await batchBackend.transcribe(trimmed, language: nil)
+                }
+            )
             let transcribedAt = clock.now
             let text = try await postProcessor.process(transcript.text)
             let processedAt = clock.now
@@ -385,19 +452,20 @@ final class AppController {
             }
             lastTranscript = text
             statusItem.setLastTranscriptAvailable(true)
-            recordHistory(text: text, audioSeconds: audio.duration)
+            recordHistory(text: text, audioSeconds: transcript.audioDuration ?? audio.duration)
 
             await deliver(text)
             let deliveredAt = clock.now
 
             state = .idle
             noteMetrics(DictationMetrics(
-                audioDuration: audio.duration,
+                audioDuration: transcript.audioDuration ?? audio.duration,
                 stopAndTrim: stoppedAt - releasedAt,
                 transcription: transcribedAt - stoppedAt,
                 postProcessing: processedAt - transcribedAt,
                 delivery: deliveredAt - processedAt,
-                total: deliveredAt - releasedAt
+                total: deliveredAt - releasedAt,
+                streamed: streamed
             ))
         } catch {
             overlay.hide()
@@ -443,10 +511,18 @@ final class AppController {
     private func startLevelUpdates() {
         levelTask?.cancel()
         levelTask = Task { [weak self] in
+            var tick = 0
             while !Task.isCancelled {
                 guard let self else { return }
                 let level = await recorder.currentLevel
                 overlay.updateLevel(level)
+                // Every 5th tick (~250 ms): feed fresh samples to the live
+                // session. The session ignores feeds after finish/cancel.
+                tick += 1
+                if tick % 5 == 0, let session = streamingSession {
+                    let fresh = await recorder.pollNewSamples()
+                    if !fresh.isEmpty { await session.feed(fresh) }
+                }
                 try? await Task.sleep(for: .milliseconds(50))
             }
         }
@@ -481,7 +557,8 @@ final class AppController {
                 asrMs: DictationMetrics.milliseconds(metrics.transcription),
                 postMs: DictationMetrics.milliseconds(metrics.postProcessing),
                 deliveryMs: DictationMetrics.milliseconds(metrics.delivery),
-                totalMs: DictationMetrics.milliseconds(metrics.total)
+                totalMs: DictationMetrics.milliseconds(metrics.total),
+                streamed: metrics.streamed
             ))
             let stats = try history.latencyStats(engineID: engineID)
             statusItem.setLatencyStats(stats.map { Self.statsSummary($0, engineID: engineID) })
