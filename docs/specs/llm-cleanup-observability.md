@@ -56,6 +56,7 @@ func cleanup(_ text: String) async -> CleanupReport
 as `cleanup(text).text`. AppController switches to `cleanup`. Outcome mapping
 inside `FoundationModelPostProcessor`:
 
+- empty input (early return) → `unchanged`
 - throw / timeout → `fellBack`, raw text
 - empty output, raw does **not** end with "scratch that" → `fellBack`, raw text
 - empty output, raw ends with "scratch that" → `changed`, empty text
@@ -65,9 +66,14 @@ inside `FoundationModelPostProcessor`:
 The existing invariant is untouched: every non-`changed`/`unchanged` path
 returns the raw transcript.
 
+AppController stops computing `cleaned != rawText` itself; the history
+`rawText` column keys off `report.outcome == .changed`, so history and
+metrics cannot disagree about whether cleanup changed the text.
+
 ### 3. Persistence (HistoryStore)
 
-Migration `v4-metrics-llm` on `dictationMetrics`:
+Migration `v5-metrics-llm` on `dictationMetrics` (`v4-transcript-rawtext`
+already exists; GRDB migration names are append-only and unique):
 
 - `llmMs REAL NOT NULL DEFAULT 0`
 - `llmOutcome TEXT NOT NULL DEFAULT 'off'`
@@ -87,6 +93,13 @@ Cleanup p50 0.38 s · p90 0.71 s · fell back 2/41
 Hidden when no qualifying rows exist. "Fell back" count is the dogfood signal
 for both reliability and (via `unchanged` rates in the table) the suspected
 echo problem.
+
+Plumbing mirrors the existing stats line: `HistoryStore.cleanupStats(limit:
+500)` — engine-agnostic, newest 500 rows with `llmOutcome != 'off'`, returns
+p50/p90 `llmMs`, `fellBack` count, and sample count —
+plus `StatusItemController.setCleanupStats(String?)` (nil hides). Refreshed
+at the same two points as the latency line: after `persistMetrics` and in
+`refreshLatencyStats`.
 
 ### 5. Session prewarm (PostProcessing + AppController)
 
