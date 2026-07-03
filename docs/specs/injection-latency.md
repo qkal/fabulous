@@ -114,8 +114,10 @@ One line beside the existing per-engine ASR and cleanup stats, computed
 from the newest 500 rows where `deliveryMethod IS NOT NULL`:
 
 ```
-Inject ax 60% 8 ms · paste 29% 58 ms · keys 8% 0.2 s · net 3%
+Inject ax 60% 8 ms · paste 29% 58 ms · keys 8% 210 ms · net 3%
 ```
+
+(p50 renders as whole milliseconds below 1 s, `%.1f s` above.)
 
 Per method: share of dictations + delivery p50 (`safetyNet` shows share
 only — its "delivery" is a clipboard write, not comparable). Methods with
