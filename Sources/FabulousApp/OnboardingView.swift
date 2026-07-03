@@ -69,6 +69,7 @@ struct OnboardingView: View {
         .padding(24)
         .frame(width: 460)
         .background(theme.paper)
+        .environment(\.theme, theme)
         .tint(theme.accent)
         .task {
             // Live status: Accessibility toggles flip in System Settings with

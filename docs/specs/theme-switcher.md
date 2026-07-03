@@ -19,9 +19,10 @@ new Settings → General → "Appearance" section:
 - Theme set: exactly Paper + Glass. No invented palettes.
 - Glass extends to app windows: dark graphite backgrounds + ice text — the
   pill's aesthetic applied everywhere, not a pill-only skin.
-- Appearance picker included. Under Glass (fixed dark by design) it only
-  affects native control internals; a footnote in the UI says "Glass is
-  always dark."
+- Appearance picker included. Glass forces dark mode app-wide while active
+  (its fixed graphite surfaces need dark-mode native controls and label
+  colors); the appearance preference is remembered and applies whenever
+  Paper is active. The UI footnote says "Glass is always dark."
 
 ## Architecture
 

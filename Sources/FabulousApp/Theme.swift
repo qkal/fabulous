@@ -54,8 +54,8 @@ struct Theme: Sendable {
     let paperNSColor: NSColor
     let cardRadius: CGFloat
     let pillStyle: PillStyle
-    /// Voice-energy halo behind the pill (ice for glass, plain black
-    /// drop shadow for frosted).
+    /// Voice-energy halo behind the pill. Only the `.glass` pill style
+    /// consumes it; the frosted style uses a plain black drop shadow.
     let pillGlow: Color
 
     /// The paper-feel look: warm off-white / warm graphite, ink text,

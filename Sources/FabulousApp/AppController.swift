@@ -73,9 +73,18 @@ final class AppController {
     /// Recordings shorter than this are almost certainly an accidental tap.
     private let minimumUtteranceDuration: TimeInterval = 0.25
 
+    /// Glass is always dark — its fixed graphite surfaces need dark-mode
+    /// native controls and label colors regardless of the appearance
+    /// preference, which applies whenever the adaptive Paper theme is active.
+    private func applyEffectiveAppearance() {
+        NSApp.appearance = settings.theme == .glass
+            ? NSAppearance(named: .darkAqua)
+            : settings.appearance.nsAppearance
+    }
+
     func start() {
         connectivity.start()
-        NSApp.appearance = settings.appearance.nsAppearance
+        applyEffectiveAppearance()
         overlay.applyTheme(Theme.current(settings.theme))
         history = try? HistoryStore(
             url: FabPaths.applicationSupport.appendingPathComponent("history.sqlite")
@@ -109,6 +118,7 @@ final class AppController {
         }
         settings.onThemeChanged = { [weak self] in
             guard let self else { return }
+            applyEffectiveAppearance()
             let theme = Theme.current(settings.theme)
             overlay.applyTheme(theme)
             settingsWindow.refreshBackground(theme.paperNSColor)
@@ -116,7 +126,7 @@ final class AppController {
         }
         settings.onAppearanceChanged = { [weak self] in
             guard let self else { return }
-            NSApp.appearance = settings.appearance.nsAppearance
+            applyEffectiveAppearance()
         }
         rebuildPostProcessor()
 
