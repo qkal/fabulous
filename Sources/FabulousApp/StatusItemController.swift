@@ -9,6 +9,7 @@ final class StatusItemController {
     private let hintItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let metricsItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let statsItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private let cleanupStatsItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let copyItem = NSMenuItem(
         title: "Copy Last Transcript",
         action: #selector(copyLastTranscript),
@@ -48,6 +49,8 @@ final class StatusItemController {
         metricsItem.isHidden = true // until the first dictation
         statsItem.isEnabled = false
         statsItem.isHidden = true // until stats exist for the active engine
+        cleanupStatsItem.isEnabled = false
+        cleanupStatsItem.isHidden = true // until an LLM-cleaned dictation exists
         copyItem.target = self
         copyItem.isEnabled = false
         settingsItem.target = self
@@ -64,6 +67,7 @@ final class StatusItemController {
             hintItem,
             metricsItem,
             statsItem,
+            cleanupStatsItem,
             .separator(),
             copyItem,
             settingsItem,
@@ -126,6 +130,13 @@ final class StatusItemController {
     func setLatencyStats(_ summary: String?) {
         statsItem.title = summary ?? ""
         statsItem.isHidden = summary == nil
+    }
+
+    /// LLM cleanup p50/p90 + fallback line under the latency line; nil hides
+    /// it (cleanup never ran, or metrics store unavailable).
+    func setCleanupStats(_ summary: String?) {
+        cleanupStatsItem.title = summary ?? ""
+        cleanupStatsItem.isHidden = summary == nil
     }
 
     @objc private func openSettings() {
