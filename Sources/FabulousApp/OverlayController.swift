@@ -54,9 +54,17 @@ final class OverlayController {
     }
 
     func updateLevel(_ level: Float) {
-        // Light exponential smoothing so the wave breathes instead of
-        // flickering per buffer.
-        model.level = model.level * 0.6 + min(1, level * 4) * 0.4
+        // Perceptual mapping: speech RMS lives around -45…-15 dB, so a linear
+        // scale leaves the wave nearly still while talking. dB-normalize into
+        // 0…1, then smooth with a fast attack (words hit instantly) and a
+        // slow release (the wave settles instead of flickering).
+        let db = 20 * log10(max(level, 0.000_01))
+        let normalized = min(1, max(0, (db + 48) / 36))
+        if normalized > model.level {
+            model.level = model.level * 0.25 + normalized * 0.75
+        } else {
+            model.level = model.level * 0.85 + normalized * 0.15
+        }
     }
 
     /// Streams the live partial transcript into the recording pill.
@@ -165,8 +173,8 @@ private struct OverlayView: View {
             case .recording:
                 CapsuleChrome(energy: CGFloat(min(1, model.level))) {
                     VStack(spacing: 5) {
-                        SiriWave(level: model.level, energetic: true)
-                            .frame(width: 96, height: 26)
+                        VoiceBars(level: model.level)
+                            .frame(width: 64, height: 30)
                         if !model.partialText.isEmpty {
                             Text(model.partialText)
                                 .font(.caption)
@@ -241,6 +249,7 @@ private struct CapsuleChrome<Content: View>: View {
                         }
                     }
                     .scaleEffect(1 + energy * 0.045)
+                    .shadow(color: theme.accent.opacity(0.28 * energy), radius: 14, y: 0)
                     .shadow(color: .black.opacity(0.10 + 0.10 * energy), radius: 14, y: 4)
             case .glass:
                 padded
@@ -270,55 +279,60 @@ private struct CapsuleChrome<Content: View>: View {
     }
 }
 
-/// The voice wave: a row of thin rounded bars riding two travelling sine
-/// waves, scaled by the live input level — surging as you speak, settling
-/// to a gentle idle breath in pauses. Monochrome: taller bars burn
-/// brighter, so loudness reads as light.
-private struct SiriWave: View {
+/// The voice meter: seven chunky rounded bars riding two travelling sine
+/// waves, driven by the dB-normalized input level — near-dots in silence,
+/// surging tall the moment you speak. Loud bars flush from ink to the
+/// accent color, so loudness reads as both height and light.
+private struct VoiceBars: View {
     var level: Float
-    /// Recording waves surge with voice; a calm wave just idles.
-    var energetic: Bool
 
     @Environment(\.theme) private var theme
 
-    private static let barCount = 17
+    private static let barCount = 7
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { timeline in
             let t = timeline.date.timeIntervalSinceReferenceDate
             Canvas { context, size in
-                let barWidth: CGFloat = 2.5
+                let barWidth: CGFloat = 5
                 let gap = (size.width - CGFloat(Self.barCount) * barWidth)
                     / CGFloat(Self.barCount - 1)
                 let midY = size.height / 2
                 let drive = CGFloat(min(1, max(0, level)))
-                // Idle breath keeps the wave alive between words.
-                let idle: CGFloat = energetic ? 0.12 : 0.3
-                let surge: CGFloat = energetic ? 0.88 : 0.2
+                // Idle breath keeps the meter alive between words.
+                let idle: CGFloat = 0.14
+                let surge: CGFloat = 0.86
 
                 for index in 0..<Self.barCount {
                     let x = CGFloat(index) * (barWidth + gap)
-                    let phase = Double(index) * 0.55
+                    let phase = Double(index) * 0.9
                     // Two travelling waves at different speeds so the motion
-                    // never reads as a loop.
-                    let wave = 0.6 * sin(t * 6.0 + phase)
-                        + 0.4 * sin(t * 9.5 - phase * 1.3)
+                    // never reads as a loop; voice nudges the tempo up.
+                    let speed = 5.0 + Double(drive) * 3.0
+                    let wave = 0.6 * sin(t * speed + phase)
+                        + 0.4 * sin(t * (speed * 1.6) - phase * 1.3)
                     // Center-weighted envelope: middle bars react hardest.
                     let center = abs(CGFloat(index) - CGFloat(Self.barCount - 1) / 2)
                         / (CGFloat(Self.barCount - 1) / 2)
-                    let envelope = 1.0 - center * center * 0.75
+                    let envelope = 1.0 - center * center * 0.55
                     let amplitude = (idle + drive * surge)
-                        * envelope * CGFloat(0.5 + 0.5 * abs(wave))
+                        * envelope * CGFloat(0.55 + 0.45 * abs(wave))
                     let height = max(barWidth, amplitude * size.height)
 
                     let rect = CGRect(
                         x: x, y: midY - height / 2,
                         width: barWidth, height: height
                     )
-                    let heat = amplitude / max(idle + surge, 0.01)
+                    let path = Path(roundedRect: rect, cornerRadius: barWidth / 2)
+                    let heat = min(1, amplitude)
                     context.fill(
-                        Path(roundedRect: rect, cornerRadius: barWidth / 2),
-                        with: .color(theme.ink.opacity(0.40 + 0.60 * min(1, heat)))
+                        path,
+                        with: .color(theme.ink.opacity(0.45 + 0.55 * heat))
+                    )
+                    // Accent bleeds in with loudness — silent bars stay ink.
+                    context.fill(
+                        path,
+                        with: .color(theme.accent.opacity(Double(drive * heat) * 0.85))
                     )
                 }
             }
