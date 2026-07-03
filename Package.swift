@@ -49,6 +49,10 @@ let package = Package(
             ]
         ),
 
+        // On-device LLM transcript cleanup (Apple Foundation Models,
+        // macOS 26). The only target importing FoundationModels.
+        .target(name: "PostProcessing", dependencies: ["FabCore"]),
+
         // The menu bar app that wires everything together.
         .executableTarget(
             name: "FabulousApp",
@@ -59,6 +63,7 @@ let package = Package(
                 "TranscriptionEngine",
                 "TextInjector",
                 "HistoryStore",
+                "PostProcessing",
             ]
         ),
 
@@ -68,6 +73,7 @@ let package = Package(
         .testTarget(name: "HotkeyEngineTests", dependencies: ["HotkeyEngine"]),
         .testTarget(name: "HistoryStoreTests", dependencies: ["HistoryStore"]),
         .testTarget(name: "TranscriptionEngineTests", dependencies: ["TranscriptionEngine"]),
+        .testTarget(name: "PostProcessingTests", dependencies: ["PostProcessing"]),
 
         // Cross-module pipeline test: resample → trim → transcribe (fake)
         // → post-process → injection strategy. The only place the stage
