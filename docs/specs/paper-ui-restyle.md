@@ -1,6 +1,6 @@
 # Paper UI restyle — overlay pill + app surfaces
 
-**Status:** approved design, not yet implemented
+**Status:** implemented
 **Date:** 2026-07-03
 
 ## Goal
