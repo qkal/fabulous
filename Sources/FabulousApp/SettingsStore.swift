@@ -17,12 +17,16 @@ final class SettingsStore {
         static let historyEnabled = "historyEnabled"
         static let soundCuesEnabled = "soundCuesEnabled"
         static let replacementEntries = "replacementEntries"
+        static let theme = "theme"
+        static let appearance = "appearance"
     }
 
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored var onHotkeyChanged: (() -> Void)?
     @ObservationIgnored var onReplacementsChanged: (() -> Void)?
     @ObservationIgnored var onEngineChanged: (() -> Void)?
+    @ObservationIgnored var onThemeChanged: (() -> Void)?
+    @ObservationIgnored var onAppearanceChanged: (() -> Void)?
 
     var hotkeySpec: HotkeySpec {
         didSet {
@@ -63,6 +67,24 @@ final class SettingsStore {
         didSet { defaults.set(soundCuesEnabled, forKey: Keys.soundCuesEnabled) }
     }
 
+    /// Visual theme for the whole app, including the dictation pill.
+    var theme: ThemeKind {
+        didSet {
+            guard theme != oldValue else { return }
+            defaults.set(theme.rawValue, forKey: Keys.theme)
+            onThemeChanged?()
+        }
+    }
+
+    /// System-appearance override (System / Light / Dark).
+    var appearance: AppearanceKind {
+        didSet {
+            guard appearance != oldValue else { return }
+            defaults.set(appearance.rawValue, forKey: Keys.appearance)
+            onAppearanceChanged?()
+        }
+    }
+
     /// Custom text replacements, applied to every transcript in order.
     var replacementEntries: [ReplacementDictionary.Entry] {
         didSet {
@@ -89,6 +111,12 @@ final class SettingsStore {
         inputDeviceUID = defaults.string(forKey: Keys.inputDeviceUID)
         historyEnabled = defaults.object(forKey: Keys.historyEnabled) as? Bool ?? true
         soundCuesEnabled = defaults.object(forKey: Keys.soundCuesEnabled) as? Bool ?? true
+        theme = defaults.string(forKey: Keys.theme)
+            .flatMap(ThemeKind.init(rawValue:))
+            ?? .paper
+        appearance = defaults.string(forKey: Keys.appearance)
+            .flatMap(AppearanceKind.init(rawValue:))
+            ?? .system
         replacementEntries = defaults.data(forKey: Keys.replacementEntries)
             .flatMap { try? JSONDecoder().decode([ReplacementDictionary.Entry].self, from: $0) }
             ?? []
