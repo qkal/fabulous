@@ -11,6 +11,7 @@ VERSION="${1:?usage: scripts/make-dmg.sh <version>}"
 APP="build/fabulous.app"
 STAGE="build/dmg-stage"
 DMG="build/fabulous-${VERSION}.dmg"
+trap 'rm -rf "${STAGE}"' EXIT
 
 [ -d "${APP}" ] || { echo "error: ${APP} missing — run scripts/build.sh first" >&2; exit 1; }
 command -v create-dmg >/dev/null 2>&1 \
@@ -37,9 +38,13 @@ ARGS=(
 # create-dmg occasionally trips over Finder/AppleScript timing; retry once.
 if ! create-dmg "${ARGS[@]}" "${DMG}" "${STAGE}"; then
   echo "==> create-dmg failed, retrying once"
+  # Re-stage from scratch so the retry starts from the same clean state
+  # as the first attempt.
   rm -f "${DMG}"
+  rm -rf "${STAGE}"
+  mkdir -p "${STAGE}"
+  cp -R "${APP}" "${STAGE}/"
   create-dmg "${ARGS[@]}" "${DMG}" "${STAGE}"
 fi
 
-rm -rf "${STAGE}"
 echo "==> done: ${DMG}"
