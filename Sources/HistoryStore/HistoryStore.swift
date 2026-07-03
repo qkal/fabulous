@@ -52,6 +52,9 @@ public struct MetricsEntry: Codable, Sendable, Equatable, Identifiable,
     public var postMs: Double
     public var deliveryMs: Double
     public var totalMs: Double
+    /// True when the audio was streamed to the engine during recording
+    /// (phase 5); keeps p50/p90 comparisons across the change honest.
+    public var streamed: Bool
 
     public init(
         id: Int64? = nil,
@@ -62,7 +65,8 @@ public struct MetricsEntry: Codable, Sendable, Equatable, Identifiable,
         asrMs: Double,
         postMs: Double,
         deliveryMs: Double,
-        totalMs: Double
+        totalMs: Double,
+        streamed: Bool = false
     ) {
         self.id = id
         self.createdAt = createdAt
@@ -73,6 +77,7 @@ public struct MetricsEntry: Codable, Sendable, Equatable, Identifiable,
         self.postMs = postMs
         self.deliveryMs = deliveryMs
         self.totalMs = totalMs
+        self.streamed = streamed
     }
 
     public mutating func didInsert(_ inserted: InsertionSuccess) {
@@ -151,6 +156,11 @@ public final class HistoryStore: Sendable {
                 t.column("postMs", .double).notNull()
                 t.column("deliveryMs", .double).notNull()
                 t.column("totalMs", .double).notNull()
+            }
+        }
+        migrator.registerMigration("v3-metrics-streamed") { db in
+            try db.alter(table: MetricsEntry.databaseTableName) { t in
+                t.add(column: "streamed", .boolean).notNull().defaults(to: false)
             }
         }
         return migrator
