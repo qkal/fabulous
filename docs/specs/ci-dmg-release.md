@@ -111,10 +111,17 @@ derived from Info.plist). Output: `fabulous-<version>.dmg` in `build/`.
 - Background: `Support/dmg-background@2x.png`, committed. Simple generated
   image — app name + arrow, paper-tone matching the app's UI. Swappable
   any time without touching the script.
-- Headless CI: Finder scripting is unreliable on runners — the script
-  passes `--skip-jenkins` (create-dmg's headless mode) when `CI` is set,
-  and retries once on failure before hard-failing. Icon layout is
-  verified by running the script locally, where Finder scripting works.
+- Headless CI: `--skip-jenkins` skips create-dmg's ENTIRE AppleScript
+  Finder-styling pass (background, window size, icon positions), not
+  just flaky bits — so it's not used up front. The script always
+  attempts the styled dmg first, even on CI, because GitHub's macOS
+  runners have a GUI session and Finder scripting usually works there
+  too. Only on a retry (after a first-attempt failure) does it append
+  `--skip-jenkins`, and only when `CI` is set; locally the retry stays
+  styled. A `--skip-jenkins` dmg is bare (no background/layout) but
+  functional — that's the accepted degraded mode for a flaky CI runner,
+  not the norm. Icon layout is verified by running the script locally,
+  where Finder scripting works.
 
 ## 4. Documentation changes
 

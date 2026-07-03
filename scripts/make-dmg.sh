@@ -31,11 +31,13 @@ ARGS=(
   --icon "fabulous.app" 150 200
   --app-drop-link 450 200
 )
-# Finder scripting is unreliable on headless CI runners; create-dmg's
-# --skip-jenkins skips the AppleScript-driven Finder styling there.
-[ -n "${CI:-}" ] && ARGS+=(--skip-jenkins)
-
-# create-dmg occasionally trips over Finder/AppleScript timing; retry once.
+# --skip-jenkins skips create-dmg's ENTIRE AppleScript-driven Finder styling
+# pass (background image, window size, icon positions) — not just the
+# flaky bits. Always attempt the styled dmg first, even on CI: GitHub's
+# macOS runners have a GUI session, so Finder scripting usually works
+# there too. Only fall back to --skip-jenkins on a CI retry, accepting a
+# bare-but-functional dmg over a failed release; locally the retry stays
+# styled so a real failure surfaces instead of silently degrading.
 if ! create-dmg "${ARGS[@]}" "${DMG}" "${STAGE}"; then
   echo "==> create-dmg failed, retrying once"
   # Re-stage from scratch so the retry starts from the same clean state
@@ -44,7 +46,9 @@ if ! create-dmg "${ARGS[@]}" "${DMG}" "${STAGE}"; then
   rm -rf "${STAGE}"
   mkdir -p "${STAGE}"
   cp -R "${APP}" "${STAGE}/"
-  create-dmg "${ARGS[@]}" "${DMG}" "${STAGE}"
+  RETRY_ARGS=("${ARGS[@]}")
+  [ -n "${CI:-}" ] && RETRY_ARGS+=(--skip-jenkins)
+  create-dmg "${RETRY_ARGS[@]}" "${DMG}" "${STAGE}"
 fi
 
 echo "==> done: ${DMG}"
