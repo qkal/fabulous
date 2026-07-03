@@ -70,22 +70,36 @@ runtime conformance check (`backend as? StreamingTranscriptionBackend`).
 - `AudioRecorder` exposes `pollNewSamples() -> [Float]` forwarding to the tap
   processor. Recording always accumulates the full utterance regardless of
   streaming.
+- `AudioRecorder.stop()` gains a raw variant (e.g. `stop(trimming: Bool)` or
+  a `stopRaw()`): in the streaming path the trimmed buffer is never used, and
+  running Silero over the whole utterance at release would reintroduce the
+  exact latency this phase removes. The streaming path stops untrimmed; VAD
+  trimming runs lazily only when falling back to batch.
 
 ### AppController flow (FabulousApp)
 
 - **beginRecording:** if selected engine is Apple Speech and the backend is
-  a `StreamingTranscriptionBackend`, call `startStreamingSession()`. If
-  session creation throws, log and continue with `nil` session — recording
-  proceeds exactly as today (no user-visible error).
-- **While recording:** the existing level-update timer cadence also drives
-  feeding — every ~250 ms, `pollNewSamples()` → `session.feed()`. A separate
-  task consumes `session.partials`, hops to the main actor, updates the
-  overlay. 250 ms of buffering is noise next to the seconds saved.
-- **finishRecording:** stop the recorder (full buffer returned as today).
-  If a live session exists, call `finish()` and use its transcript — the VAD
-  trim and the batch `transcribe()` call are both skipped. If `finish()`
-  throws, fall back to the batch path over the full (VAD-trimmed) buffer.
+  a `StreamingTranscriptionBackend`, kick off `startStreamingSession()` in a
+  concurrent task so it never delays `state = .recording` or the overlay.
+  Samples accumulate in the tap regardless; the first `feed` after the
+  session becomes ready catches up via the `drainNew` cursor. If session
+  creation throws, log and continue with no session — recording proceeds
+  exactly as today (no user-visible error).
+- **While recording:** a feed step runs on the existing level-update loop
+  (every ~5th tick, ≈250 ms): `pollNewSamples()` → `session.feed()`. A
+  separate task consumes `session.partials`, hops to the main actor, updates
+  the overlay. 250 ms of buffering is noise next to the seconds saved.
+- **finishRecording:** stop the recorder *untrimmed*. If audio is shorter
+  than `minimumUtteranceDuration`, `cancel()` the session (don't leak it)
+  and bail as today. Otherwise, with a live session, `finish()` and use its
+  transcript — VAD trim and batch `transcribe()` both skipped. If `finish()`
+  throws, VAD-trim the full buffer and fall back to the batch path.
 - **cancelRecording (Esc):** `session.cancel()`, then the existing cleanup.
+- **Task hygiene:** the partials-consuming task and the feed loop are
+  cancelled in both `finishRecording` and `cancelRecording` *before* the
+  overlay transitions, so a late partial can never repaint a hidden pill.
+  The session actor ignores `feed` calls arriving after `finish()`/`cancel()`
+  has begun (the feed timer races the stop path by design).
 - Everything downstream of the final transcript is unchanged: focus-change
   guard, replacements/post-processing, history, injection, safety net.
 
@@ -105,10 +119,14 @@ post-processing. That is expected and normal for dictation UIs.
 - **VAD is skipped in the streaming path.** The analyzer handles silence
   itself. Silero/EnergyVAD still trim the batch-fallback and Whisper paths.
 - **Post-processing runs once, on the final transcript.** Never on partials.
-- **Metrics:** `DictationMetrics.transcribeSeconds` in the streaming path
+- **Metrics:** `DictationMetrics.transcription` in the streaming path
   measures release→final (the finalize wait) — the number the user feels.
-  Same field, same `dictationMetrics` table. New boolean column `streamed`
-  so per-engine p50/p90 comparisons in the A/B stay honest.
+  `stopAndTrim` shrinks to just engine stop + drain (no VAD) there; that is
+  accurate, not a lie, since no trimming ran. New boolean field
+  `DictationMetrics.streamed` persisted via a `v3-metrics-streamed`
+  GRDB migration (default false for old rows), so per-engine p50/p90
+  comparisons in the A/B stay honest. The menu keeps showing per-engine
+  stats unchanged; `streamed` exists for log/DB analysis.
 
 ## Error handling
 
@@ -118,6 +136,8 @@ post-processing. That is expected and normal for dictation UIs.
 | `feed`/analyzer error mid-utterance | Session marks itself dead; `finish()` throws; batch fallback |
 | `finish()` throws | Batch transcribe of the full VAD-trimmed buffer |
 | Esc during recording | `cancel()` the session; existing cancel flow |
+| Utterance below `minimumUtteranceDuration` | `cancel()` the session; bail silently as today |
+| `feed` after finish/cancel began | Session ignores it (feed timer races the stop path) |
 | Device config change (AirPods) mid-recording | `TapProcessor` keeps sample continuity; `drainNew` cursor unaffected |
 | Empty audio | Empty transcript, same as today |
 
@@ -130,9 +150,12 @@ path that exists today, including `safetyNet` on injection failure.
 - **PipelineTests (always run):** fake `StreamingTranscriptionBackend` —
   chunks arrive via `feed` in order; `finish()` text is used and batch
   transcribe is *not* called; session-creation failure and `finish()` failure
-  both fall back to batch; Esc cancels the session.
+  both fall back to batch; Esc cancels the session; short utterance cancels
+  the session; `feed` after finish is ignored.
 - **TapProcessor unit tests:** `drainNew` cursor — incremental drains sum to
   `drain()`, cursor survives converter rebuild (config change).
+- **HistoryStore tests:** `v3` migration adds `streamed`; old rows read back
+  as `streamed == false`.
 - **Real-engine (conditional, `FAB_REAL_ASR=1`):** stream `say`-synthesized
   audio in 250 ms chunks; assert at least one partial arrives before
   `finish()`; final text matches the batch result for the same audio
