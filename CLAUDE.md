@@ -118,6 +118,10 @@ sees everything. `TranscriptionEngine` is the only target importing WhisperKit.
   `say`-synthesized audio; `SileroVADTests` auto-skip unless the VAD model
   is installed. `Tests/PipelineTests` (capture → decision e2e with a fake
   backend) always runs.
+- **Streaming failures must degrade to the batch path** over the full
+  untrimmed buffer — `StreamingDictation.finalTranscript` is the seam. The
+  streaming path stops the recorder with `trimming: false`; do not "fix"
+  that back to a trimmed stop.
 
 ## State / roadmap
 
@@ -134,10 +138,11 @@ focus-change guard, replacements editor tab; phase 4 "faster engine"
 Settings → General engine toggle (Whisper stays default; pending A/B
 dogfooding before any default switch), Silero VAD with EnergyVAD fallback,
 end-to-end pipeline tests (`Tests/PipelineTests`) + conditional real-engine
-tests.
+tests; phase 5 "streaming" (docs/specs/phase-5-streaming.md): SpeechAnalyzer
+sessions fed live during recording, overlay partials, batch fallback,
+`streamed` metrics column.
 
-Not yet built: streaming transcription / partial results UI,
-Parakeet/FluidAudio backend (only if SpeechAnalyzer disappoints), per-app
-injection override settings UI, LLM post-processing (interface exists:
-`TextPostProcessor`), signed/notarized .dmg release pipeline. See
-docs/architecture.md and docs/specs/.
+Not yet built: Parakeet/FluidAudio backend (only if SpeechAnalyzer
+disappoints), per-app injection override settings UI, LLM post-processing
+(interface exists: `TextPostProcessor`), signed/notarized .dmg release
+pipeline. See docs/architecture.md and docs/specs/.
