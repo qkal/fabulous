@@ -14,6 +14,9 @@ public struct DictationMetrics: Sendable, Equatable {
     public var delivery: Duration
     /// Hotkey release → text delivered.
     public var total: Duration
+    /// True when the audio was fed to the engine live during recording, so
+    /// `transcription` is just the finalize wait (phase-5 streaming path).
+    public var streamed: Bool
 
     public init(
         audioDuration: TimeInterval,
@@ -21,7 +24,8 @@ public struct DictationMetrics: Sendable, Equatable {
         transcription: Duration,
         postProcessing: Duration,
         delivery: Duration,
-        total: Duration
+        total: Duration,
+        streamed: Bool = false
     ) {
         self.audioDuration = audioDuration
         self.stopAndTrim = stopAndTrim
@@ -29,6 +33,7 @@ public struct DictationMetrics: Sendable, Equatable {
         self.postProcessing = postProcessing
         self.delivery = delivery
         self.total = total
+        self.streamed = streamed
     }
 
     /// Compact one-liner for the menu bar, leading with what the user feels.
@@ -46,6 +51,7 @@ public struct DictationMetrics: Sendable, Equatable {
             + " post=\(Self.seconds(postProcessing))"
             + " delivery=\(Self.seconds(delivery))"
             + " audio=\(String(format: "%.2f", audioDuration))s"
+            + (streamed ? " streamed" : "")
     }
 
     /// True when the felt latency blew the budget (show a hint, not a party).
