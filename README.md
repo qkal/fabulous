@@ -40,7 +40,7 @@ Requires an **Apple Silicon** Mac (arm64-only binary) running macOS 14+.
 
 ## Build
 
-Requires Xcode 16+ on Apple Silicon. No project generation step — this is a
+Requires Xcode 26+ on Apple Silicon. No project generation step — this is a
 plain SwiftPM package.
 
 ```sh
