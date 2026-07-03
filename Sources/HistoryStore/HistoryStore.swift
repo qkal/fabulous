@@ -1,3 +1,4 @@
+import FabCore
 import Foundation
 import GRDB
 
@@ -62,6 +63,10 @@ public struct MetricsEntry: Codable, Sendable, Equatable, Identifiable,
     /// True when the audio was streamed to the engine during recording
     /// (phase 5); keeps p50/p90 comparisons across the change honest.
     public var streamed: Bool
+    /// Wall time of the LLM cleanup stage in milliseconds; 0 when off.
+    public var llmMs: Double
+    /// What the cleanup stage did; stored as the enum's raw-value text.
+    public var llmOutcome: LLMCleanupOutcome
 
     public init(
         id: Int64? = nil,
@@ -73,7 +78,9 @@ public struct MetricsEntry: Codable, Sendable, Equatable, Identifiable,
         postMs: Double,
         deliveryMs: Double,
         totalMs: Double,
-        streamed: Bool = false
+        streamed: Bool = false,
+        llmMs: Double = 0,
+        llmOutcome: LLMCleanupOutcome = .off
     ) {
         self.id = id
         self.createdAt = createdAt
@@ -85,6 +92,8 @@ public struct MetricsEntry: Codable, Sendable, Equatable, Identifiable,
         self.deliveryMs = deliveryMs
         self.totalMs = totalMs
         self.streamed = streamed
+        self.llmMs = llmMs
+        self.llmOutcome = llmOutcome
     }
 
     public mutating func didInsert(_ inserted: InsertionSuccess) {
@@ -112,6 +121,32 @@ public struct LatencyStats: Sendable, Equatable {
         self.p90TotalMs = p90TotalMs
         self.p50ASRMs = p50ASRMs
         self.p90ASRMs = p90ASRMs
+    }
+}
+
+/// LLM cleanup latency/reliability over recent dictations (all engines —
+/// the cleanup model is engine-independent).
+public struct CleanupStats: Sendable, Equatable {
+    public var sampleCount: Int
+    public var p50LlmMs: Double
+    public var p90LlmMs: Double
+    public var fellBackCount: Int
+
+    public init(
+        sampleCount: Int, p50LlmMs: Double, p90LlmMs: Double, fellBackCount: Int
+    ) {
+        self.sampleCount = sampleCount
+        self.p50LlmMs = p50LlmMs
+        self.p90LlmMs = p90LlmMs
+        self.fellBackCount = fellBackCount
+    }
+
+    /// e.g. "Cleanup p50 0.38 s · p90 0.71 s · fell back 2/41"
+    public var menuSummary: String {
+        let p50 = String(format: "%.2f", p50LlmMs / 1000)
+        let p90 = String(format: "%.2f", p90LlmMs / 1000)
+        return "Cleanup p50 \(p50) s · p90 \(p90) s"
+            + " · fell back \(fellBackCount)/\(sampleCount)"
     }
 }
 
@@ -175,6 +210,13 @@ public final class HistoryStore: Sendable {
                 // Pre-LLM-cleanup transcript; NULL when cleanup was off
                 // or changed nothing.
                 t.add(column: "rawText", .text)
+            }
+        }
+        migrator.registerMigration("v5-metrics-llm") { db in
+            try db.alter(table: MetricsEntry.databaseTableName) { t in
+                t.add(column: "llmMs", .double).notNull().defaults(to: 0)
+                t.add(column: "llmOutcome", .text).notNull()
+                    .defaults(to: LLMCleanupOutcome.off.rawValue)
             }
         }
         return migrator
@@ -265,6 +307,37 @@ public final class HistoryStore: Sendable {
             p50ASRMs: Self.percentile(asrs, 0.5),
             p90ASRMs: Self.percentile(asrs, 0.9)
         )
+    }
+
+    /// Cleanup p50/p90 and fallback count over the newest `limit` dictations
+    /// where the LLM stage ran; nil when it never has.
+    public func cleanupStats(limit: Int = 500) throws -> CleanupStats? {
+        let rows = try dbQueue.read { db in
+            try MetricsEntry
+                .filter(Column("llmOutcome") != LLMCleanupOutcome.off.rawValue)
+                .order(Column("createdAt").desc, Column("id").desc)
+                .limit(limit)
+                .fetchAll(db)
+        }
+        guard !rows.isEmpty else { return nil }
+        let times = rows.map(\.llmMs).sorted()
+        return CleanupStats(
+            sampleCount: rows.count,
+            p50LlmMs: Self.percentile(times, 0.5),
+            p90LlmMs: Self.percentile(times, 0.9),
+            fellBackCount: rows.filter { $0.llmOutcome == .fellBack }.count
+        )
+    }
+
+    /// Raw llmOutcome column values, newest first — pins the on-disk
+    /// representation in tests.
+    public func rawLLMOutcomes() throws -> [String] {
+        try dbQueue.read { db in
+            try String.fetchAll(
+                db,
+                sql: "SELECT llmOutcome FROM dictationMetrics ORDER BY createdAt DESC, id DESC"
+            )
+        }
     }
 
     /// Nearest-rank percentile of an already-sorted, non-empty array.
