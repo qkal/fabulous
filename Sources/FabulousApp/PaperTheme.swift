@@ -7,7 +7,7 @@ import SwiftUI
 enum PaperTheme {
     /// Window background: warm paper in light mode, warm graphite in dark.
     static let paperNSColor = NSColor(name: nil) { appearance in
-        appearance.isDark
+        appearance.isDarkLegacy
             ? NSColor(red: 0.145, green: 0.140, blue: 0.130, alpha: 1)  // #252421
             : NSColor(red: 0.969, green: 0.961, blue: 0.949, alpha: 1)  // #F7F5F2
     }
@@ -15,14 +15,14 @@ enum PaperTheme {
 
     /// Card fill: lifted slightly off the paper (near-white / lighter graphite).
     static let card = Color(nsColor: NSColor(name: nil) { appearance in
-        appearance.isDark
+        appearance.isDarkLegacy
             ? NSColor(red: 0.190, green: 0.185, blue: 0.175, alpha: 1)
             : NSColor(red: 0.995, green: 0.992, blue: 0.986, alpha: 1)
     })
 
     /// Primary text / wave color: near-black ink, warm white in dark mode.
     static let ink = Color(nsColor: NSColor(name: nil) { appearance in
-        appearance.isDark
+        appearance.isDarkLegacy
             ? NSColor(red: 0.925, green: 0.918, blue: 0.902, alpha: 1)
             : NSColor(red: 0.150, green: 0.140, blue: 0.120, alpha: 1)
     })
@@ -39,7 +39,7 @@ enum PaperTheme {
 }
 
 extension NSAppearance {
-    fileprivate var isDark: Bool {
+    fileprivate var isDarkLegacy: Bool {
         bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
     }
 }
