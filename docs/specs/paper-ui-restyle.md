@@ -63,13 +63,36 @@ Static namespace, no state:
 
 ### App windows
 
-- `SettingsView`: window/content background `PaperTheme.paper`; each
-  logical form group wrapped in a rounded-rect card (`cardRadius`,
-  `hairline` border, slightly lighter/darker fill than the window). Controls
-  keep native structure; `.tint(PaperTheme.accent)` at the root so buttons,
-  toggles, pickers, progress bars follow.
-- `OnboardingView`: same paper background + card treatment + tint.
+Actual structure (verified): `SettingsView` is a `NavigationSplitView`
+(sidebar `List` of sections → `.formStyle(.grouped)` forms), not tabs —
+conveniently already the reference's sidebar-plus-cards shape.
+
+- `SettingsView`: hide the default form/list chrome
+  (`.scrollContentBackground(.hidden)` on forms and sidebar) and lay
+  `PaperTheme.paper` behind both panes. Grouped-form section insets already
+  render as rounded cards — they keep doing so over paper; no per-group
+  wrapping needed. `SettingsWindowController` sets
+  `window.backgroundColor` to the paper NSColor and
+  `titlebarAppearsTransparent = true` so the title bar blends into the
+  paper instead of striping.
+- `OnboardingView`: paper background; the existing
+  `.quaternary`-filled permission card becomes a `cardRadius` +
+  `hairline` paper card.
+- **Tint does not cross windows:** settings, onboarding, and the overlay
+  panel are three separate `NSHostingView` roots — apply
+  `.tint(PaperTheme.accent)` at each root (the existing
+  `Color.accentColor.opacity(0.2)` status capsule in the Models tab then
+  follows automatically).
 - Menu bar menu and status item: untouched (system-drawn).
+
+### Implementation risk (called out)
+
+SwiftUI `.ultraThinMaterial` inside the clear, borderless overlay `NSPanel`
+usually renders via a backing `NSVisualEffectView`, but clear-window blending
+can surprise. If the material looks wrong (gray slab / no vibrancy), fall
+back to an explicit `NSVisualEffectView` (`.hudWindow` or `.popover`
+material, `state: .active`) behind the hosting view, masked to the capsule.
+Verify over both light and dark content early in implementation.
 
 ## Error handling
 
