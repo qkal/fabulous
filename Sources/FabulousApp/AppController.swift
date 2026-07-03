@@ -663,7 +663,7 @@ final class AppController {
         guard let history, let engineID = activeModelID else { return }
         let stats = try? history.latencyStats(engineID: engineID)
         statusItem.setLatencyStats(stats.map { Self.statsSummary($0, engineID: engineID) })
-        let cleanupStats = (try? history.cleanupStats()) ?? nil
+        let cleanupStats: CleanupStats? = (try? history.cleanupStats()) ?? nil
         statusItem.setCleanupStats(cleanupStats?.menuSummary)
     }
 

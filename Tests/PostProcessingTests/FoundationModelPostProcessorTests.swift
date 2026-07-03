@@ -148,10 +148,10 @@ struct FoundationModelPostProcessorTests {
         #expect(report == CleanupReport(text: "", outcome: .changed))
     }
 
-    @Test func reportUnchangedOnEmptyInput() async {
+    @Test func reportOffOnEmptyInput() async {
         let p = processor(.fail) // would throw if the model were called
         let report = await p.cleanup("")
-        #expect(report == CleanupReport(text: "", outcome: .unchanged))
+        #expect(report == CleanupReport(text: "", outcome: .off))
     }
 
     // MARK: - Prewarm

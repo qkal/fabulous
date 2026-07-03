@@ -79,8 +79,10 @@ public actor FoundationModelPostProcessor: ContextualTextPostProcessor {
     }
 
     public func cleanup(_ text: String) async -> CleanupReport {
+        // .off, not .unchanged: the model never ran, and "unchanged" is the
+        // echo signal in dogfood stats.
         guard !text.isEmpty else {
-            return CleanupReport(text: text, outcome: .unchanged)
+            return CleanupReport(text: text, outcome: .off)
         }
         let instructions = CleanupPromptBuilder.instructions(
             vocabulary: vocabulary, appName: appName

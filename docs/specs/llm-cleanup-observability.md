@@ -62,7 +62,8 @@ func cleanup(_ text: String) async -> CleanupReport
 as `cleanup(text).text`. AppController switches to `cleanup`. Outcome mapping
 inside `FoundationModelPostProcessor`:
 
-- empty input (early return) → `unchanged`
+- empty input (early return) → `off` — the model never ran, and `unchanged`
+  is the echo signal
 - throw / timeout → `fellBack`, raw text
 - empty output, raw does **not** end with "scratch that" → `fellBack`, raw text
 - empty output, raw ends with "scratch that" → `changed`, empty text
