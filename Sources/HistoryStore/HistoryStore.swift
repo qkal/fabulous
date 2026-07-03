@@ -67,6 +67,9 @@ public struct MetricsEntry: Codable, Sendable, Equatable, Identifiable,
     public var llmMs: Double
     /// What the cleanup stage did; stored as the enum's raw-value text.
     public var llmOutcome: LLMCleanupOutcome
+    /// How the text reached the target app; stored as the enum's raw-value
+    /// text. NULL only on rows recorded before the v6 migration.
+    public var deliveryMethod: DeliveryMethod?
 
     public init(
         id: Int64? = nil,
@@ -80,7 +83,8 @@ public struct MetricsEntry: Codable, Sendable, Equatable, Identifiable,
         totalMs: Double,
         streamed: Bool = false,
         llmMs: Double = 0,
-        llmOutcome: LLMCleanupOutcome = .off
+        llmOutcome: LLMCleanupOutcome = .off,
+        deliveryMethod: DeliveryMethod? = nil
     ) {
         self.id = id
         self.createdAt = createdAt
@@ -94,6 +98,7 @@ public struct MetricsEntry: Codable, Sendable, Equatable, Identifiable,
         self.streamed = streamed
         self.llmMs = llmMs
         self.llmOutcome = llmOutcome
+        self.deliveryMethod = deliveryMethod
     }
 
     public mutating func didInsert(_ inserted: InsertionSuccess) {
@@ -147,6 +152,54 @@ public struct CleanupStats: Sendable, Equatable {
         let p90 = String(format: "%.2f", p90LlmMs / 1000)
         return "Cleanup p50 \(p50) s · p90 \(p90) s"
             + " · fell back \(fellBackCount)/\(sampleCount)"
+    }
+}
+
+/// Delivery-method share + p50 over recent dictations (all engines).
+/// Only rows recorded after the v6 migration qualify, which also keeps
+/// pre-async-restore delivery times out of the percentiles.
+public struct DeliveryStats: Sendable, Equatable {
+    public struct MethodStats: Sendable, Equatable {
+        public var method: DeliveryMethod
+        public var count: Int
+        public var p50DeliveryMs: Double
+
+        public init(method: DeliveryMethod, count: Int, p50DeliveryMs: Double) {
+            self.method = method
+            self.count = count
+            self.p50DeliveryMs = p50DeliveryMs
+        }
+    }
+
+    public var sampleCount: Int
+    /// Fixed display order (axInsert, paste, keystrokes, safetyNet);
+    /// methods with no rows are absent.
+    public var methods: [MethodStats]
+
+    public init(sampleCount: Int, methods: [MethodStats]) {
+        self.sampleCount = sampleCount
+        self.methods = methods
+    }
+
+    /// e.g. "Inject ax 60% 8 ms · paste 29% 58 ms · keys 8% 210 ms · net 3%"
+    /// safetyNet shows share only — its "delivery" is a clipboard write,
+    /// not comparable to injection latencies.
+    public var menuSummary: String {
+        let labels: [DeliveryMethod: String] = [
+            .axInsert: "ax", .paste: "paste", .keystrokes: "keys", .safetyNet: "net",
+        ]
+        let parts = methods.map { m in
+            let pct = Int((Double(m.count) / Double(sampleCount) * 100).rounded())
+            let head = "\(labels[m.method] ?? m.method.rawValue) \(pct)%"
+            return m.method == .safetyNet ? head : "\(head) \(Self.time(m.p50DeliveryMs))"
+        }
+        return "Inject " + parts.joined(separator: " · ")
+    }
+
+    static func time(_ ms: Double) -> String {
+        ms < 1000
+            ? String(format: "%.0f ms", ms)
+            : String(format: "%.1f s", ms / 1000)
     }
 }
 
@@ -217,6 +270,12 @@ public final class HistoryStore: Sendable {
                 t.add(column: "llmMs", .double).notNull().defaults(to: 0)
                 t.add(column: "llmOutcome", .text).notNull()
                     .defaults(to: LLMCleanupOutcome.off.rawValue)
+            }
+        }
+        migrator.registerMigration("v6-metrics-delivery-method") { db in
+            try db.alter(table: MetricsEntry.databaseTableName) { t in
+                // NULL = pre-migration row; every new row writes a value.
+                t.add(column: "deliveryMethod", .text)
             }
         }
         return migrator
@@ -336,6 +395,44 @@ public final class HistoryStore: Sendable {
             try String.fetchAll(
                 db,
                 sql: "SELECT llmOutcome FROM dictationMetrics ORDER BY createdAt DESC, id DESC"
+            )
+        }
+    }
+
+    /// Delivery-method share and p50 over the newest `limit` dictations
+    /// recorded since the v6 migration; nil when there are none.
+    public func deliveryStats(limit: Int = 500) throws -> DeliveryStats? {
+        let rows = try dbQueue.read { db in
+            try MetricsEntry
+                .filter(Column("deliveryMethod") != nil)
+                .order(Column("createdAt").desc, Column("id").desc)
+                .limit(limit)
+                .fetchAll(db)
+        }
+        guard !rows.isEmpty else { return nil }
+        let order: [DeliveryMethod] = [.axInsert, .paste, .keystrokes, .safetyNet]
+        let methods = order.compactMap { method -> DeliveryStats.MethodStats? in
+            let times = rows
+                .filter { $0.deliveryMethod == method }
+                .map(\.deliveryMs)
+                .sorted()
+            guard !times.isEmpty else { return nil }
+            return DeliveryStats.MethodStats(
+                method: method,
+                count: times.count,
+                p50DeliveryMs: Self.percentile(times, 0.5)
+            )
+        }
+        return DeliveryStats(sampleCount: rows.count, methods: methods)
+    }
+
+    /// Raw deliveryMethod column values, newest first — pins the on-disk
+    /// representation in tests (including NULL for pre-migration rows).
+    public func rawDeliveryMethods() throws -> [String?] {
+        try dbQueue.read { db in
+            try Optional<String>.fetchAll(
+                db,
+                sql: "SELECT deliveryMethod FROM dictationMetrics ORDER BY createdAt DESC, id DESC"
             )
         }
     }
