@@ -55,9 +55,15 @@ struct FoundationModelPostProcessorTests {
         #expect(try await p.process("hello world") == "hello world")
     }
 
-    @Test func emptyOutputWithScratchThatIsAccepted() async throws {
+    @Test func emptyOutputWithTrailingScratchThatIsAccepted() async throws {
         let p = processor(.reply(""))
         #expect(try await p.process("blah blah scratch that") == "")
+    }
+
+    @Test func emptyOutputWithMidUtteranceScratchThatFallsBackToRawText() async throws {
+        let p = processor(.reply(""))
+        let content = "scratch that section off the list"
+        #expect(try await p.process(content) == content)
     }
 
     @Test func emptyInputSkipsModel() async throws {
@@ -65,8 +71,10 @@ struct FoundationModelPostProcessorTests {
         #expect(try await p.process("") == "")
     }
 
-    @Test func commandPhraseDetection() {
-        #expect(FoundationModelPostProcessor.containsCommandPhrase("blah Scratch That"))
-        #expect(!FoundationModelPostProcessor.containsCommandPhrase("hello world"))
+    @Test func scratchThatDetection() {
+        #expect(FoundationModelPostProcessor.endsWithScratchThat("blah Scratch That"))
+        #expect(FoundationModelPostProcessor.endsWithScratchThat("blah blah, scratch that."))
+        #expect(!FoundationModelPostProcessor.endsWithScratchThat("hello world"))
+        #expect(!FoundationModelPostProcessor.endsWithScratchThat("scratch that section off the list"))
     }
 }

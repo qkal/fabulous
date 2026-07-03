@@ -49,7 +49,7 @@ public actor FoundationModelPostProcessor: ContextualTextPostProcessor {
             if trimmed.isEmpty {
                 // "blah blah scratch that" legitimately cleans to nothing;
                 // empty output on anything else is a model failure.
-                return Self.containsCommandPhrase(text) ? "" : text
+                return Self.endsWithScratchThat(text) ? "" : text
             }
             return cleaned
         } catch {
@@ -58,9 +58,15 @@ public actor FoundationModelPostProcessor: ContextualTextPostProcessor {
         }
     }
 
-    /// The only command that can legitimately empty an utterance.
-    public static func containsCommandPhrase(_ text: String) -> Bool {
-        text.lowercased().contains("scratch that")
+    /// The only command that can legitimately empty an utterance — and only
+    /// when it trails the content it cancels. Mid-utterance "scratch that"
+    /// is content ("scratch that section off the list"), so empty output
+    /// there is a model failure, not a cancellation. Trailing punctuation
+    /// is tolerated because ASR likes to append it ("scratch that.").
+    public static func endsWithScratchThat(_ text: String) -> Bool {
+        text.lowercased()
+            .trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+            .hasSuffix("scratch that")
     }
 
     private struct TimeoutError: Error {}
