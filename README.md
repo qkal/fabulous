@@ -20,6 +20,24 @@ CoreML → text lands in the frontmost app. Includes a settings window
 overlay, and optional local transcript history. See
 [docs/architecture.md](docs/architecture.md) for where this is going.
 
+## Install
+
+Requires an **Apple Silicon** Mac (arm64-only binary) running macOS 14+.
+
+1. Download the latest `fabulous-<version>.dmg` from
+   [Releases](https://github.com/qkal/fabulous/releases).
+2. Open it and drag **fabulous** into **Applications**.
+3. The app is unsigned (no Apple Developer certificate), so clear the
+   quarantine flag once:
+
+   ```sh
+   xattr -dr com.apple.quarantine /Applications/fabulous.app
+   ```
+
+> **Updating:** each release has a fresh ad-hoc signature, so macOS
+> revokes Microphone and Accessibility permissions on update — re-grant
+> both in System Settings → Privacy & Security.
+
 ## Build
 
 Requires Xcode 16+ on Apple Silicon. No project generation step — this is a

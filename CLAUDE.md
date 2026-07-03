@@ -12,6 +12,7 @@ swift test                    # unit tests (Swift Testing, not XCTest)
 scripts/build.sh              # → build/fabulous.app (assembles bundle + codesigns)
 CONFIG=debug scripts/build.sh # debug bundle
 open build/fabulous.app       # run (menu bar app, no Dock icon)
+scripts/make-dmg.sh <version>  # → build/fabulous-<version>.dmg (needs create-dmg)
 ```
 
 Build treats warnings in our targets as things to fix — the codebase compiles
@@ -144,9 +145,13 @@ Silero VAD with EnergyVAD fallback, end-to-end pipeline tests
 "streaming" (docs/specs/phase-5-streaming.md): SpeechAnalyzer sessions
 fed live during recording, overlay partials, batch fallback, `streamed`
 metrics column; paper UI restyle (docs/specs/paper-ui-restyle.md): PaperTheme
-tokens, frosted paper pill, paper settings/onboarding, theme switcher (Paper/Glass + System/Light/Dark appearance, docs/specs/theme-switcher.md).
+tokens, frosted paper pill, paper settings/onboarding, theme switcher (Paper/Glass + System/Light/Dark appearance, docs/specs/theme-switcher.md);
+CI + dmg releases (docs/specs/ci-dmg-release.md): GitHub Actions
+build+test on push/PR (macos-26, pinned), tag push v* → unsigned dmg
+attached to GitHub Release (create-dmg, version stamped from tag;
+Info.plist stays 0.0.0-dev in git).
 
 Not yet built: Parakeet/FluidAudio backend (only if SpeechAnalyzer
 disappoints), per-app injection override settings UI, LLM post-processing
-(interface exists: `TextPostProcessor`), signed/notarized .dmg release
-pipeline. See docs/architecture.md and docs/specs/.
+(interface exists: `TextPostProcessor`). See docs/architecture.md and
+docs/specs/.
