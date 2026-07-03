@@ -21,12 +21,26 @@ public protocol ContextualTextPostProcessor: TextPostProcessor {
     /// Non-throwing cleanup with outcome reporting. Implementations must
     /// uphold the invariant: every failure returns the input text.
     func cleanup(_ text: String) async -> CleanupReport
+    /// Optional prewarm hook, called at record-start so model warm-up
+    /// overlaps the user speaking.
+    func prepare() async
+}
+
+extension ContextualTextPostProcessor {
+    public func prepare() async {}
 }
 
 /// Seam over the language model so fallback behavior is testable
 /// without Apple Intelligence.
 public protocol LanguageModelRequesting: Sendable {
     func cleanup(instructions: String, transcript: String) async throws -> String
+    /// Optional prewarm hook: build/warm a session for these instructions
+    /// ahead of the cleanup call. Best-effort — failures must be swallowed.
+    func prepare(instructions: String) async
+}
+
+extension LanguageModelRequesting {
+    public func prepare(instructions: String) async {}
 }
 
 /// LLM cleanup stage. Invariant: may improve or no-op, never lose text —
@@ -49,6 +63,15 @@ public actor FoundationModelPostProcessor: ContextualTextPostProcessor {
 
     public func setAppContext(name: String?) {
         appName = name
+    }
+
+    public func prepare() async {
+        // Must assemble the instructions EXACTLY as cleanup() does — the
+        // requester only uses the warmed session on an exact match.
+        let instructions = CleanupPromptBuilder.instructions(
+            vocabulary: vocabulary, appName: appName
+        )
+        await requester.prepare(instructions: instructions)
     }
 
     public func process(_ text: String) async throws -> String {

@@ -23,6 +23,21 @@ private struct FakeRequester: LanguageModelRequesting {
     }
 }
 
+/// Records the instruction strings handed to prepare/cleanup.
+private actor RecordingRequester: LanguageModelRequesting {
+    private(set) var preparedInstructions: [String] = []
+    private(set) var cleanedInstructions: [String] = []
+
+    func prepare(instructions: String) async {
+        preparedInstructions.append(instructions)
+    }
+
+    func cleanup(instructions: String, transcript: String) async throws -> String {
+        cleanedInstructions.append(instructions)
+        return transcript
+    }
+}
+
 struct FoundationModelPostProcessorTests {
     private func processor(
         _ behavior: FakeRequester.Behavior,
@@ -137,5 +152,31 @@ struct FoundationModelPostProcessorTests {
         let p = processor(.fail) // would throw if the model were called
         let report = await p.cleanup("")
         #expect(report == CleanupReport(text: "", outcome: .unchanged))
+    }
+
+    // MARK: - Prewarm
+
+    @Test func prepareForwardsExactCleanupInstructions() async throws {
+        let requester = RecordingRequester()
+        let p = FoundationModelPostProcessor(
+            requester: requester, vocabulary: ["WhisperKit"]
+        )
+        await p.setAppContext(name: "Notes")
+        await p.prepare()
+        _ = await p.cleanup("hello")
+        let prepared = await requester.preparedInstructions
+        let cleaned = await requester.cleanedInstructions
+        // The prewarmed instructions must be byte-identical to what cleanup
+        // sends, or the real requester discards the warmed session.
+        #expect(prepared == cleaned)
+        #expect(prepared.count == 1)
+    }
+
+    @Test func defaultPrepareIsANoOp() async throws {
+        // FakeRequester doesn't implement prepare(instructions:) — the
+        // protocol-extension default keeps existing requester fakes
+        // source-compatible, and the processor's prepare() tolerates it.
+        let p = processor(.reply("x"))
+        await p.prepare()
     }
 }
