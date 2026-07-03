@@ -10,7 +10,7 @@ import Testing
 /// the trait additionally checks PostProcessingAvailability.current; a
 /// machine with the flag set but Apple Intelligence off skips instead of
 /// failing.
-@Suite struct RealFoundationModelTests {
+@Suite(.serialized) struct RealFoundationModelTests {
     private static var isEnabled: Bool {
         ProcessInfo.processInfo.environment["FAB_REAL_LLM"] == "1"
             && PostProcessingAvailability.current == .available
