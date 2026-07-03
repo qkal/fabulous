@@ -3,6 +3,7 @@ import SwiftUI
 /// Walks through the two required permissions with live status checks.
 /// Shown on first launch and reachable from the menu bar afterwards.
 struct OnboardingView: View {
+    @Bindable var store: SettingsStore
     @State private var microphoneGranted = Permissions.microphoneGranted
     @State private var microphoneDenied = Permissions.microphoneDenied
     @State private var accessibilityTrusted = Permissions.accessibilityTrusted
@@ -12,6 +13,7 @@ struct OnboardingView: View {
     let onComplete: () -> Void
 
     private var allGranted: Bool { microphoneGranted && accessibilityTrusted }
+    private var theme: Theme { Theme.current(store.theme) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -66,8 +68,8 @@ struct OnboardingView: View {
         }
         .padding(24)
         .frame(width: 460)
-        .background(PaperTheme.paper)
-        .tint(PaperTheme.accent)
+        .background(theme.paper)
+        .tint(theme.accent)
         .task {
             // Live status: Accessibility toggles flip in System Settings with
             // no notification API, so poll while the window is up.
@@ -102,11 +104,11 @@ struct OnboardingView: View {
         }
         .padding(12)
         .background(
-            RoundedRectangle(cornerRadius: PaperTheme.cardRadius)
-                .fill(PaperTheme.card)
+            RoundedRectangle(cornerRadius: theme.cardRadius)
+                .fill(theme.card)
                 .overlay(
-                    RoundedRectangle(cornerRadius: PaperTheme.cardRadius)
-                        .strokeBorder(PaperTheme.hairline, lineWidth: 1)
+                    RoundedRectangle(cornerRadius: theme.cardRadius)
+                        .strokeBorder(theme.hairline, lineWidth: 1)
                 )
         )
     }

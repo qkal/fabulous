@@ -75,6 +75,8 @@ final class AppController {
 
     func start() {
         connectivity.start()
+        NSApp.appearance = settings.appearance.nsAppearance
+        overlay.applyTheme(Theme.current(settings.theme))
         history = try? HistoryStore(
             url: FabPaths.applicationSupport.appendingPathComponent("history.sqlite")
         )
@@ -104,6 +106,17 @@ final class AppController {
         settings.onEngineChanged = { [weak self] in
             guard let self, state == .idle || isFailed(state) else { return }
             Task { await self.ensureSelectedModelLoaded() }
+        }
+        settings.onThemeChanged = { [weak self] in
+            guard let self else { return }
+            let theme = Theme.current(settings.theme)
+            overlay.applyTheme(theme)
+            settingsWindow.refreshBackground(theme.paperNSColor)
+            onboardingWindow?.backgroundColor = theme.paperNSColor
+        }
+        settings.onAppearanceChanged = { [weak self] in
+            guard let self else { return }
+            NSApp.appearance = settings.appearance.nsAppearance
         }
         rebuildPostProcessor()
 
@@ -664,7 +677,7 @@ final class AppController {
             NSApp.activate(ignoringOtherApps: true)
             return
         }
-        let view = OnboardingView(hotkeyName: settings.hotkeySpec.displayName) { [weak self] in
+        let view = OnboardingView(store: settings, hotkeyName: settings.hotkeySpec.displayName) { [weak self] in
             guard let self else { return }
             onboardingWindow?.close()
             if case .needsPermissions = state {
@@ -675,7 +688,7 @@ final class AppController {
         window.title = "fabulous"
         window.styleMask = [.titled, .closable]
         window.titlebarAppearsTransparent = true
-        window.backgroundColor = PaperTheme.paperNSColor
+        window.backgroundColor = Theme.current(settings.theme).paperNSColor
         window.isReleasedWhenClosed = false
         window.center()
         onboardingWindow = window
