@@ -135,12 +135,15 @@ local signing, per-dictation latency metrics in menu + log, sound cues,
 Esc-cancels-recording, injection safety net (clipboard + overlay notice),
 focus-change guard, replacements editor tab; phase 4 "faster engine"
 (docs/specs/phase-4-faster-engine.md): SpeechAnalyzer backend behind a
-Settings → General engine toggle (Whisper stays default; pending A/B
-dogfooding before any default switch), Silero VAD with EnergyVAD fallback,
-end-to-end pipeline tests (`Tests/PipelineTests`) + conditional real-engine
-tests; phase 5 "streaming" (docs/specs/phase-5-streaming.md): SpeechAnalyzer
-sessions fed live during recording, overlay partials, batch fallback,
-`streamed` metrics column.
+Settings → General engine toggle (Whisper stays default — A/B measured
+2026-07-03: streamed Apple Speech p50 475 ms / p90 591 ms vs Whisper
+~2.5 s on comparable audio, but the user chose to keep Whisper default
+for now; delivery/injection ≈370 ms is the next latency bottleneck),
+Silero VAD with EnergyVAD fallback, end-to-end pipeline tests
+(`Tests/PipelineTests`) + conditional real-engine tests; phase 5
+"streaming" (docs/specs/phase-5-streaming.md): SpeechAnalyzer sessions
+fed live during recording, overlay partials, batch fallback, `streamed`
+metrics column.
 
 Not yet built: Parakeet/FluidAudio backend (only if SpeechAnalyzer
 disappoints), per-app injection override settings UI, LLM post-processing
