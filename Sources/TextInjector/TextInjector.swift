@@ -14,7 +14,11 @@ public enum InjectionError: Error, Sendable, Equatable {
 /// posting all want the main thread.
 @MainActor
 public final class TextInjector {
-    private let selector: StrategySelector
+    /// Swappable so the app layer can apply per-app overrides when the
+    /// user edits them — the injector itself is long-lived (a pending
+    /// clipboard restoreTask must survive settings changes). `package`,
+    /// not `public`: only in-package code may mutate it.
+    package var selector: StrategySelector
     /// Pending clipboard restore from the last paste. Cancelled when a new
     /// injection starts, so a rapid follow-up dictation can't have its
     /// freshly-written transcript clobbered by the previous restore.

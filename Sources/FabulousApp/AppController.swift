@@ -116,6 +116,7 @@ final class AppController {
             statusItem.update(for: state, hotkeyName: settings.hotkeySpec.displayName)
         }
         settings.onReplacementsChanged = { [weak self] in self?.rebuildPostProcessor() }
+        settings.onAppOverridesChanged = { [weak self] in self?.applyInjectionOverrides() }
         settings.onLLMCleanupChanged = { [weak self] in self?.rebuildLLMProcessor() }
         settings.onEngineChanged = { [weak self] in
             guard let self, state == .idle || isFailed(state) else { return }
@@ -135,6 +136,7 @@ final class AppController {
         }
         rebuildPostProcessor()
         rebuildLLMProcessor()
+        applyInjectionOverrides()
 
         Task { await upgradeVAD() }
 
@@ -693,6 +695,13 @@ final class AppController {
         postProcessor = entries.isEmpty
             ? PassthroughPostProcessor()
             : ReplacementDictionary(entries: entries)
+    }
+
+    /// Pushes the current per-app overrides into the injector. The
+    /// injector instance is deliberately kept — recreating it would drop
+    /// a pending clipboard restore.
+    private func applyInjectionOverrides() {
+        injector.selector = StrategySelector(userOverrides: settings.appOverrideEntries)
     }
 
     /// (Re)creates the LLM stage. Vocabulary is baked into the instructions,

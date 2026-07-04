@@ -75,6 +75,16 @@ struct StrategySelectionTests {
     }
 }
 
+/// The settings UI names built-ins via `builtInDisplayNames`; a terminal
+/// added to `defaultOverrides` without a display name would render as a
+/// raw bundle ID. Keeping the key sets identical fails here instead.
+@Test func everyBuiltInOverrideHasADisplayName() {
+    #expect(
+        Set(StrategySelector.builtInDisplayNames.keys)
+            == Set(StrategySelector.defaultOverrides.keys)
+    )
+}
+
 /// DeliveryMethod (FabCore) mirrors InjectionStrategy's raw values so
 /// AppController can map by rawValue. A case rename in either enum fails here.
 @Test func deliveryMethodCoversEveryInjectionStrategy() {

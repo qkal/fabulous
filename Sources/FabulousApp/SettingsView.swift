@@ -1,9 +1,12 @@
+import AppKit
 import AudioCapture
 import FabCore
 import HistoryStore
 import HotkeyEngine
 import PostProcessing
 import SwiftUI
+import TextInjector
+import UniformTypeIdentifiers
 
 /// Closures into AppController — the views stay free of engine wiring.
 struct SettingsActions {
@@ -18,7 +21,7 @@ struct SettingsActions {
 /// Sidebar sections of the settings window — a real, resizable app window
 /// with navigation, not a popup.
 enum SettingsSection: String, CaseIterable, Identifiable {
-    case general, models, replacements, history
+    case general, models, replacements, apps, history
 
     var id: String { rawValue }
 
@@ -27,6 +30,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .general: "General"
         case .models: "Models"
         case .replacements: "Replacements"
+        case .apps: "Apps"
         case .history: "History"
         }
     }
@@ -36,6 +40,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .general: "gearshape"
         case .models: "brain"
         case .replacements: "character.cursor.ibeam"
+        case .apps: "app"
         case .history: "clock.arrow.circlepath"
         }
     }
@@ -82,6 +87,8 @@ struct SettingsRootView: View {
             )
         case .replacements:
             ReplacementsSettingsPane(store: store)
+        case .apps:
+            AppsSettingsPane(store: store)
         case .history:
             HistorySettingsPane(store: store, actions: actions)
         }
@@ -450,6 +457,187 @@ private struct ReplacementsSettingsPane: View {
         )
         newPattern = ""
         newReplacement = ""
+    }
+}
+
+// MARK: - Apps
+
+/// Per-app injection overrides: which strategy the chain starts at for a
+/// given frontmost app. Built-in terminal defaults are shown greyed; a
+/// user entry on the same bundle ID shadows the built-in (that's also how
+/// a built-in is "undone" — shadow it with Accessibility insert).
+private struct AppsSettingsPane: View {
+    @Bindable var store: SettingsStore
+
+    @Environment(\.theme) private var theme
+
+    /// One list row — built-in default or user override. A user entry on
+    /// a built-in bundle ID replaces the built-in row.
+    private struct Row: Identifiable {
+        let bundleID: String
+        let displayName: String
+        let strategy: InjectionStrategy
+        let isUserEntry: Bool
+        var id: String { bundleID }
+    }
+
+    private var rows: [Row] {
+        var byID: [String: Row] = [:]
+        for (bundleID, strategy) in StrategySelector.defaultOverrides {
+            byID[bundleID] = Row(
+                bundleID: bundleID,
+                displayName: StrategySelector.builtInDisplayNames[bundleID] ?? bundleID,
+                strategy: strategy,
+                isUserEntry: false
+            )
+        }
+        for entry in store.appOverrideEntries {
+            byID[entry.bundleID] = Row(
+                bundleID: entry.bundleID,
+                displayName: entry.displayName,
+                strategy: entry.strategy,
+                isUserEntry: true
+            )
+        }
+        return byID.values.sorted {
+            $0.displayName.localizedCaseInsensitiveCompare($1.displayName)
+                == .orderedAscending
+        }
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                Text("Choose which injection method fabulous tries first in a specific app. If that method fails, the usual fallbacks still apply. Built-in rows cover terminals that mishandle direct insertion; change their method to override them.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Overrides") {
+                ForEach(rows) { row in
+                    rowView(row)
+                }
+                Button {
+                    addApp()
+                } label: {
+                    Label("Add App…", systemImage: "plus")
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .background(theme.paper)
+    }
+
+    @ViewBuilder
+    private func rowView(_ row: Row) -> some View {
+        HStack(spacing: 8) {
+            Image(nsImage: icon(for: row.bundleID))
+                .resizable()
+                .frame(width: 20, height: 20)
+            Text(row.displayName)
+                .foregroundStyle(row.isUserEntry ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+            if !row.isUserEntry {
+                Text("built-in")
+                    .font(.caption2)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(Capsule().fill(theme.accent.opacity(0.15)))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Picker("", selection: strategyBinding(for: row)) {
+                ForEach(InjectionStrategy.allCases, id: \.self) { strategy in
+                    Text(displayName(of: strategy)).tag(strategy)
+                }
+            }
+            .labelsHidden()
+            .fixedSize()
+            Button {
+                store.appOverrideEntries.removeAll { $0.bundleID == row.bundleID }
+            } label: {
+                Image(systemName: "trash")
+            }
+            .buttonStyle(.borderless)
+            .disabled(!row.isUserEntry)
+            .help(row.isUserEntry
+                ? "Remove override"
+                : "Built-in — change its method to shadow it")
+        }
+    }
+
+    /// Any picker change writes a user entry, even one equal to the
+    /// built-in's value — one uniform rule, and the result is deletable.
+    private func strategyBinding(for row: Row) -> Binding<InjectionStrategy> {
+        Binding(
+            get: { row.strategy },
+            set: { newValue in
+                if let index = store.appOverrideEntries.firstIndex(
+                    where: { $0.bundleID == row.bundleID }
+                ) {
+                    store.appOverrideEntries[index].strategy = newValue
+                } else {
+                    store.appOverrideEntries.append(.init(
+                        bundleID: row.bundleID,
+                        displayName: row.displayName,
+                        strategy: newValue
+                    ))
+                }
+            }
+        )
+    }
+
+    private func displayName(of strategy: InjectionStrategy) -> String {
+        switch strategy {
+        case .axInsert: "Accessibility insert"
+        case .paste: "Paste"
+        case .keystrokes: "Keystrokes"
+        }
+    }
+
+    /// LaunchServices icon lookups can hit disk, and SwiftUI re-evaluates
+    /// body (all rows) on every store edit — cache per bundle ID.
+    @MainActor private static var iconCache: [String: NSImage] = [:]
+
+    @MainActor
+    private func icon(for bundleID: String) -> NSImage {
+        if let cached = Self.iconCache[bundleID] { return cached }
+        let icon: NSImage =
+            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+                NSWorkspace.shared.icon(forFile: url.path)
+            } else {
+                NSWorkspace.shared.icon(for: .applicationBundle)
+            }
+        Self.iconCache[bundleID] = icon
+        return icon
+    }
+
+    private func addApp() {
+        let panel = NSOpenPanel()
+        // Starting point only — system apps live in /System/Applications,
+        // so the user can browse anywhere.
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.allowedContentTypes = [.applicationBundle]
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.message = "Choose an app to set an injection method for"
+        guard panel.runModal() == .OK,
+              let url = panel.url,
+              let bundle = Bundle(url: url),
+              let bundleID = bundle.bundleIdentifier
+        else { return }  // bundle without an identifier: ignore (spec)
+
+        // Already listed (user row or built-in)? The row is on screen —
+        // no duplicate is created.
+        guard !rows.contains(where: { $0.bundleID == bundleID }) else { return }
+
+        let name = (bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String)
+            ?? (bundle.object(forInfoDictionaryKey: "CFBundleName") as? String)
+            ?? url.deletingPathExtension().lastPathComponent
+        // Paste: the most common reason to override at all.
+        store.appOverrideEntries.append(.init(
+            bundleID: bundleID, displayName: name, strategy: .paste
+        ))
     }
 }
 

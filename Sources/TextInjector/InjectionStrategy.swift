@@ -59,6 +59,19 @@ public struct StrategySelector: Sendable {
         "org.alacritty": .paste,
     ]
 
+    /// Display names for `defaultOverrides` entries, keyed identically —
+    /// the settings UI can't ask NSWorkspace to name apps that aren't
+    /// installed, and bundle IDs are ugly. Adding a built-in means adding
+    /// to both maps (a test enforces the keys match).
+    public static let builtInDisplayNames: [String: String] = [
+        "com.apple.Terminal": "Terminal",
+        "com.googlecode.iterm2": "iTerm2",
+        "dev.warp.Warp-Stable": "Warp",
+        "com.github.wez.wezterm": "WezTerm",
+        "net.kovidgoyal.kitty": "kitty",
+        "org.alacritty": "Alacritty",
+    ]
+
     public var overrides: [String: InjectionStrategy]
 
     public init(overrides: [String: InjectionStrategy] = StrategySelector.defaultOverrides) {

@@ -169,8 +169,10 @@ kept in history (`rawText`) when cleanup changed it.
 injection latency (docs/specs/injection-latency.md): paste clipboard
 restore moved off the critical path (~370 ms → ~60 ms delivery),
 per-dictation DeliveryMethod (axInsert/paste/keystrokes/safetyNet) in
-metrics + menu "Inject" stats line.
+metrics + menu "Inject" stats line;
+per-app injection overrides (docs/specs/per-app-overrides.md): Apps
+settings tab, AppOverride user entries layered over built-in terminal
+defaults (user wins, delete reverts), injector selector swapped live.
 
 Not yet built: Parakeet/FluidAudio backend (only if SpeechAnalyzer
-disappoints), per-app injection override settings UI. See docs/architecture.md
-and docs/specs/.
+disappoints). See docs/architecture.md and docs/specs/.
