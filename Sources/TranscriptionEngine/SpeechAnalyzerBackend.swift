@@ -12,9 +12,12 @@ import Speech
 /// is set to `.processLifetime`, which is this backend's version of the
 /// keep-warm policy (latency > memory, per the phase-3 spec).
 @available(macOS 26.0, *)
-public actor SpeechAnalyzerBackend: StreamingTranscriptionBackend {
+public actor SpeechAnalyzerBackend: StreamingTranscriptionBackend, ContextBiasing {
     /// The locale the analyzer was prepared for; nil until `load` succeeds.
     private var loadedLocale: Locale?
+
+    /// On-screen vocabulary for the NEXT batch transcribe; single-shot.
+    private var contextualTerms: [String] = []
 
     private static let analyzerOptions = SpeechAnalyzer.Options(
         priority: .userInitiated,
@@ -66,6 +69,18 @@ public actor SpeechAnalyzerBackend: StreamingTranscriptionBackend {
         // with .processLifetime retention keeping the underlying model warm.
         let transcriber = Self.makeTranscriber(locale: locale)
         let analyzer = SpeechAnalyzer(modules: [transcriber], options: Self.analyzerOptions)
+
+        // Plain init(modules:options:) has no analysisContext parameter —
+        // setContext after creation is the uniform mechanism (spec).
+        let terms = contextualTerms
+        contextualTerms = []
+        if !terms.isEmpty {
+            do {
+                try await analyzer.setContext(Self.analysisContext(terms: terms))
+            } catch {
+                NSLog("fabulous: contextual strings rejected (batch): \(error)")
+            }
+        }
 
         guard
             let source = Self.pcmBuffer(from: audio),
@@ -128,6 +143,16 @@ public actor SpeechAnalyzerBackend: StreamingTranscriptionBackend {
         // Final results only — batch transcription has no consumer for
         // volatile partials; the streaming session (below) opts into them.
         SpeechTranscriber(locale: locale, preset: .transcription)
+    }
+
+    public func setContextualTerms(_ terms: [String]) {
+        contextualTerms = terms
+    }
+
+    static func analysisContext(terms: [String]) -> AnalysisContext {
+        let context = AnalysisContext()
+        context.contextualStrings = [.general: terms]
+        return context
     }
 
     // MARK: - Audio plumbing
@@ -310,6 +335,18 @@ actor SpeechAnalyzerStreamingSession: StreamingSession {
         collector.cancel()
         await analyzer.cancelAndFinishNow()
         partialsContinuation.finish()
+    }
+
+    /// Mid-session biasing: SpeechAnalyzer.setContext works on a running
+    /// analyzer, so terms landing after the session started still bias
+    /// the rest of the utterance.
+    func updateContext(_ terms: [String]) async {
+        guard !ended, !terms.isEmpty else { return }
+        do {
+            try await analyzer.setContext(SpeechAnalyzerBackend.analysisContext(terms: terms))
+        } catch {
+            NSLog("fabulous: contextual strings rejected (streaming): \(error)")
+        }
     }
 }
 

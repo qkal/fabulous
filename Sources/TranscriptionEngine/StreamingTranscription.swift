@@ -22,6 +22,16 @@ public protocol StreamingSession: Sendable {
     /// Abandons the session. Safe to call at any time, including after
     /// `finish()` failed.
     func cancel() async
+
+    /// Attaches contextual vocabulary (e.g. on-screen terms) to a session
+    /// already in flight. Best-effort and engine-dependent: the default
+    /// no-op covers engines without a biasing API. Never throws — a
+    /// rejected context is logged and the session continues unbiased.
+    func updateContext(_ terms: [String]) async
+}
+
+extension StreamingSession {
+    public func updateContext(_ terms: [String]) async {}
 }
 
 /// A backend that can transcribe live during recording. `AppController`
