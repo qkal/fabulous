@@ -82,8 +82,7 @@ New tab after Replacements, styled like the existing tabs (PaperTheme).
 - **+** button → NSOpenPanel filtered to `.app`, initial directory
   /Applications but free to browse anywhere (system apps live in
   /System/Applications); bundle ID + display name read from the chosen
-  bundle. A bundle with no bundle identifier is ignored. Picking an app
-  that already has a row selects that row instead of duplicating. New
+  bundle. A bundle with no bundle identifier is ignored. New
   rows default to **Paste** (the most common reason to override).
 - Each user row has a trash button; disabled on built-in rows. (Built as per-row buttons — the grouped Form has no row selection, so a selection-based − button was dropped.)
 - Changing any row's popup always writes a user entry, even if the chosen
