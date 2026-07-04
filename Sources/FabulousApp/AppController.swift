@@ -31,12 +31,17 @@ final class AppController {
     private let whisperBackend = WhisperKitBackend()
     /// Created lazily on first use (macOS 26+ only).
     private var speechAnalyzerBackend: (any TranscriptionBackend)?
+    private let parakeetBackend = ParakeetBackend()
     /// The backend dictations go through, per the engine preference.
     private var backend: any TranscriptionBackend {
-        if settings.transcriptionEngine == .appleSpeech, let speechAnalyzerBackend {
-            return speechAnalyzerBackend
+        switch settings.transcriptionEngine {
+        case .appleSpeech:
+            return speechAnalyzerBackend ?? whisperBackend
+        case .parakeet:
+            return parakeetBackend
+        case .whisper:
+            return whisperBackend
         }
-        return whisperBackend
     }
     private let injector = TextInjector()
     private let hotkey = HotkeyMonitor()
@@ -179,18 +184,14 @@ final class AppController {
         switch settings.transcriptionEngine {
         case .whisper: await loadWhisper()
         case .appleSpeech: await loadAppleSpeech()
-        case .parakeet:
-            // ParakeetBackend lands in a later task (plan Task 8 replaces
-            // this bridge with loadParakeet()); fall back to Whisper so a
-            // mid-branch build stays dictation-capable.
-            await loadWhisper()
+        case .parakeet: await loadParakeet()
         }
     }
 
     private func loadWhisper() async {
-        // Free the Apple Speech locale hold; keep-warm applies to the
-        // active engine only.
+        // Free the inactive engines; keep-warm applies to the active one only.
         if let inactive = speechAnalyzerBackend { await inactive.unload() }
+        await parakeetBackend.unload()
         let model = selectedModel
         do {
             if await !modelManager.isInstalled(model) {
@@ -222,6 +223,7 @@ final class AppController {
         // Whisper's multi-GB model has no business staying resident while
         // another engine handles dictation.
         await whisperBackend.unload()
+        await parakeetBackend.unload()
         state = .loadingModel(nil)
         do {
             let engine = speechAnalyzerBackend ?? SpeechAnalyzerBackend()
@@ -236,6 +238,33 @@ final class AppController {
             // loadWhisper below is what actually restores dictation.
             settings.transcriptionEngine = .whisper
             await flashFailure("Apple Speech failed (\(shortErrorText(error))) — using Whisper")
+            await loadWhisper()
+        }
+        await refreshModelList()
+    }
+
+    /// Loads Parakeet, auto-downloading its model sets on first use; any
+    /// failure reverts the preference and falls back to Whisper so
+    /// dictation keeps working.
+    private func loadParakeet() async {
+        await whisperBackend.unload()
+        if let inactive = speechAnalyzerBackend { await inactive.unload() }
+        do {
+            if await !modelManager.isInstalled(.parakeetV3) {
+                try await downloadModel(.parakeetV3, drivesAppState: true)
+            }
+            state = .loadingModel(nil)
+            try await parakeetBackend.load(model: .parakeetV3)
+            activeModelID = ModelDescriptor.parakeetV3.id
+            state = .idle
+            refreshLatencyStats()
+        } catch ModelManager.ManagerError.offline {
+            settings.transcriptionEngine = .whisper
+            await flashFailure("Offline — can't download Parakeet. Using Whisper")
+            await loadWhisper()
+        } catch {
+            settings.transcriptionEngine = .whisper
+            await flashFailure("Parakeet failed (\(shortErrorText(error))) — using Whisper")
             await loadWhisper()
         }
         await refreshModelList()
@@ -313,7 +342,16 @@ final class AppController {
                     }
                 },
                 useModel: { [weak self] model in
-                    Task { [weak self] in await self?.switchModel(to: model) }
+                    Task { [weak self] in
+                        guard let self else { return }
+                        if model.id == ModelDescriptor.parakeetV3.id {
+                            guard state == .idle || isFailed(state) else { return }
+                            // Fires onEngineChanged, which loads Parakeet.
+                            settings.transcriptionEngine = .parakeet
+                        } else {
+                            await switchModel(to: model)
+                        }
+                    }
                 },
                 recentTranscripts: { [weak self] in
                     (try? self?.history?.recent(limit: 50)) ?? []
@@ -333,6 +371,7 @@ final class AppController {
         // preference here is safe: onEngineChanged no-ops while loading.
         settings.transcriptionEngine = .whisper
         if let inactive = speechAnalyzerBackend { await inactive.unload() }
+        await parakeetBackend.unload()
         do {
             try await whisperBackend.load(model: model)
             activeModelID = model.id
@@ -401,8 +440,8 @@ final class AppController {
     /// in the tap and the first feed catches up via the drainNew cursor.
     /// Failure is silent — the batch path is untouched and always works.
     private func startStreamingSessionIfAvailable() {
-        guard settings.transcriptionEngine == .appleSpeech,
-              let streamingBackend = backend as? any StreamingTranscriptionBackend
+        // Whisper is batch-only, so the cast is the whole engine check.
+        guard let streamingBackend = backend as? any StreamingTranscriptionBackend
         else { return }
         sessionStartTask = Task { [weak self] in
             do {
