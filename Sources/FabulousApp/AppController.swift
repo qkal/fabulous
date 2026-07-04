@@ -62,7 +62,7 @@ final class AppController {
     private let settingsWindow = SettingsWindowController()
     private var onboardingWindow: NSWindow?
     private var levelTask: Task<Void, Never>?
-    /// Live streaming session for the current utterance (Apple Speech only).
+    /// Live streaming session for the current utterance (streaming-capable engines).
     private var streamingSession: (any StreamingSession)?
     /// Creates the session off the critical path of `beginRecording`.
     private var sessionStartTask: Task<Void, Never>?

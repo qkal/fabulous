@@ -26,6 +26,16 @@ struct ParakeetBackendTests {
         }
     }
 
+    @Test func startStreamingSessionWithoutLoadThrows() async {
+        let backend = ParakeetBackend(
+            modelsDirectory: FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString)
+        )
+        await #expect(throws: TranscriptionError.self) {
+            _ = try await backend.startStreamingSession()
+        }
+    }
+
     // MARK: - Real-engine tests
 
     /// FAB_REAL_ASR=1 opts in; additionally auto-skip unless the Parakeet
@@ -72,7 +82,8 @@ struct ParakeetBackendTests {
         let transcript = try await session.finish()
         let lowered = transcript.text.lowercased()
         #expect(lowered.contains("streaming"))
-        #expect(lowered.contains("three"))
+        // Parakeet may normalize spoken numbers to digits.
+        #expect(lowered.contains("three") || lowered.contains("3"))
         #expect(await partialCount.value > 0)
     }
 
