@@ -14,25 +14,134 @@
 - Tests: `cd /Users/kal/fabulous && swift test` (Swift Testing, not XCTest).
 - Zero warnings in our targets under strict concurrency — warnings are defects.
 - Only `TranscriptionEngine` may import FluidAudio (same rule as WhisperKit).
-- FluidAudio declares its own `Language`; in files importing both FluidAudio and FabCore write `FabCore.Language`. Same for `FabCore.AudioBuffer` wherever AVFoundation is imported.
+- FluidAudio declares its own `Language`; in files importing both FluidAudio and FabCore write `FabCore.Language` for ours. For FluidAudio's own `Language`, `FluidAudio.Language` does NOT compile (Task 1 finding: FluidAudio ships a same-named `public struct FluidAudio {}` namespace shim that shadows the qualifier) — add `import enum FluidAudio.Language` alongside `import FluidAudio` and refer to it as bare `Language`. Same `FabCore.AudioBuffer` qualification rule wherever AVFoundation is imported.
 - Transcripts must never be silently lost: every failure path degrades to the batch decode over the full untrimmed buffer via `StreamingDictation.finalTranscript`; downstream safety net untouched.
 - Engine-load failure must revert `settings.transcriptionEngine = .whisper` AND explicitly call `loadWhisper()` — `onEngineChanged` no-ops outside `.idle`/`.failed`.
 - Commit after every task (small, task-scoped commits).
 
 ## Task 1 findings (filled during Task 1 — later tasks consume these)
 
-> PROVISIONAL until Task 1 completes. Task 1's last step REWRITES this block
-> and adjusts the marked constants/code in Tasks 2, 3, 5, 6, 7.
+> RESOLVED. Verified 2026-07-04 by reading `.build/checkouts/FluidAudio`
+> (tag v0.15.4) directly — a much richer/newer package than this plan's
+> original guesses (v0.9-era API shapes). All values below are real,
+> compile-checkable facts, cited by file path in the Task 1 report
+> (`.superpowers/sdd/task-1-report.md`).
 
-- FluidAudio version pinned: _(fill: latest stable tag)_
-- v3 repo ID: `FluidInference/parakeet-tdt-0.6b-v3-coreml` _(verify)_
-- EOU 120M repo ID: `FluidInference/parakeet-eou-120m-coreml` _(verify — grep FluidAudio source)_
-- v3 required files: _(fill from FluidAudio's model-names source)_
-- EOU required files: _(fill)_
-- Download API that targets a custom directory: _(fill: exact signature, or "none — taught-location strategy")_
-- `StreamingEouAsrManager` custom-directory loading: _(fill: yes/how, or workaround)_
-- Combined size on disk (MB): _(fill after first download)_
-- Max usable `eouDebounceMs`: _(fill — must exceed any plausible mid-dictation pause; target ≥ 600000)_
+- FluidAudio version pinned: **v0.15.4** (`.package(url: ..., from: "0.15.4")`;
+  highest stable tag, no pre-release suffix, per `git ls-remote --tags` sorted
+  with `sort -V`). Platform floor unaffected: FluidAudio itself targets
+  macOS 14.0+ / iOS 17.0+ (see its `CLAUDE.md`), so our `.macOS(.v14)` stays.
+- v3 repo ID (HuggingFace): `FluidInference/parakeet-tdt-0.6b-v3-coreml`
+  (`Repo.parakeetV3` in `ModelNames.swift:6`) — confirmed as originally
+  guessed. **Local folder name differs from the HF id**: FluidAudio's own
+  download/load path derivation always overrides whatever leaf directory
+  name is passed in with `Repo.folderName` — for `.parakeetV3` that's
+  `"parakeet-tdt-0.6b-v3"` (`name` minus `-coreml`; see `ModelNames.swift:70-77`
+  and the default-case fallback at `ModelNames.swift:256-258`). Empirically
+  verified: `AsrModels.load(from:)` and `AsrModels.download(to:)` both do
+  `directory.deletingLastPathComponent().appendingPathComponent(repo.folderName)`
+  internally (`AsrModels.swift:140-143`, `:241`, `:492`), so **the last path
+  component you pass is discarded and replaced** — `ParakeetLayout`'s v3 repo
+  root must end in `parakeet-tdt-0.6b-v3`, not the full HF id.
+- EOU 120M repo ID (HuggingFace): **`FluidInference/parakeet-realtime-eou-120m-coreml`**
+  — NOT `FluidInference/parakeet-eou-120m-coreml` as this plan originally
+  guessed. It carries a chunk-size subpath: `.../160ms`, `.../320ms`, or
+  `.../1280ms` (`Repo.parakeetEou160/320/1280` in `ModelNames.swift:21-23`).
+  We use the default `.ms160` chunk size (160ms latency, ~8-9% WER per the
+  doc comment in `StreamingEouAsrManager.swift:19`). Local folder name:
+  `"parakeet-eou-streaming/160ms"` (`ModelNames.swift:219`) — again distinct
+  from the HF id's `parakeet-realtime-eou-120m-coreml/160ms`.
+- v3 required files (int8 encoder precision, our default): `Preprocessor.mlmodelc`,
+  `Encoder.mlmodelc`, `Decoder.mlmodelc`, `JointDecisionv3.mlmodelc` (from
+  `ModelNames.ASR.requiredModelsV3(precision: .int8)`, `ModelNames.swift:351-360`)
+  plus the shared vocabulary file `parakeet_vocab.json`
+  (`ModelNames.ASR.vocabularyFile`, `ModelNames.swift:330`), checked
+  separately by `AsrModels.modelsExist` (`AsrModels.swift:592-597`). Measured
+  combined size via HuggingFace's tree API (not a local download):
+  **~460.7 MB**.
+- EOU required files: `streaming_encoder.mlmodelc`, `decoder.mlmodelc`,
+  `joint_decision.mlmodelc`, `vocab.json` (all lowercase — distinct naming
+  convention from the v3/ASR files) — `ModelNames.ParakeetEOU.requiredModels`,
+  `ModelNames.swift:501-516`. Measured combined size (160ms variant) via
+  HuggingFace's tree API: **~213.7 MB**.
+- Download API that targets a custom directory: **yes.**
+  `AsrModels.download(to: URL? = nil, force: Bool = false, version: AsrModelVersion = .v3, encoderPrecision: ParakeetEncoderPrecision = .int8, progressHandler: DownloadUtils.ProgressHandler? = nil) async throws -> URL`
+  (`AsrModels.swift:483-489`) and
+  `AsrModels.downloadAndLoad(to:configuration:version:encoderPrecision:encoderComputeUnits:progressHandler:) async throws -> AsrModels`
+  (`AsrModels.swift:548-555`). **Caveat** (see repo-ID note above): the `to:`
+  directory's last path component is discarded and replaced with
+  `version.repo.folderName` — pass the *parent* of
+  `ParakeetLayout.repoRoot(...)`, or equivalently pass `repoRoot(...)`
+  itself since its last component already equals `folderName` by
+  construction. `progressHandler` reports real fractional
+  `DownloadProgress.fractionCompleted` (`DownloadUtils.swift:137-153`), not
+  coarse two-step progress as this plan assumed — `ParakeetInstaller` should
+  forward it directly. No taught-location fallback needed.
+- `StreamingEouAsrManager` custom-directory loading: **yes, two ways.**
+  `func loadModels(from directory: URL) async throws` (`StreamingEouAsrManager.swift:284`)
+  loads flat files directly from `directory` (must directly contain
+  `streaming_encoder.mlmodelc`, `decoder.mlmodelc`, `joint_decision.mlmodelc`,
+  `vocab.json` — no further folderName derivation, unlike the v3 ASR path).
+  `func loadModels(to directory: URL? = nil, configuration: MLModelConfiguration? = nil, progressHandler: DownloadUtils.ProgressHandler? = nil) async throws`
+  (`StreamingEouAsrManager.swift:333-337`) downloads-then-loads: it computes
+  `modelDir = (directory ?? defaultCacheDir).appendingPathComponent(repo.folderName)`
+  (single append, no leaf-discarding) and calls `loadModels(from: modelDir)`.
+  So for `ParakeetInstaller`, call the lower-level `DownloadUtils.downloadRepo`
+  directly (see below — no standalone static download-only function exists
+  for EOU); for `ParakeetBackend.load`, call
+  `loadModels(from: ParakeetLayout.repoRoot(ParakeetLayout.eouFolderName, downloadBase:))`.
+- Combined size on disk (MB): **~674 MB** (460.7 + 213.7, HuggingFace-API-measured
+  file sizes for the exact required file sets above; not yet confirmed against
+  an actual on-disk download — re-measure via `ParakeetLayout.sizeOnDisk`
+  after Task 9's manual GUI check and correct `ModelDescriptor.parakeetV3.approximateSizeMB`
+  if it drifts materially).
+- Max usable `eouDebounceMs`: **`Int`, default `1280`, no compiled ceiling**
+  (`public var eouDebounceMs: Int = 1280`, `StreamingEouAsrManager.swift:211`;
+  same default in the `init` at `:236`). No clamping/validation found in the
+  EOU-detection loop (`StreamingEouAsrManager.swift:615-631`) — `600_000`
+  (10 minutes) is safely representable and never triggers mid-dictation.
+- **Sendable / concurrency (new finding, not in the original checklist but
+  required by Task 5/7's `@retroactive @unchecked Sendable` question):**
+  both `AsrManager` (`AsrManager.swift:6`, `public actor AsrManager`) and
+  `StreamingEouAsrManager` (`StreamingEouAsrManager.swift:163`,
+  `public actor StreamingEouAsrManager`) are Swift `actor`s — Sendable by
+  the language, not `@unchecked`. **No `@retroactive @unchecked Sendable`
+  extension is needed anywhere in Task 5 or Task 7**; that provisional
+  comment/code is removed.
+- **API shape difference affecting Task 5 (new finding):** `AsrManager.transcribe`
+  requires an externalized `decoderState: inout TdtDecoderState` argument in
+  every overload (`AsrManager.swift:353-357,478-482`) — there is no
+  zero-argument `transcribe(samples)`. `TdtDecoderState()` is a throwing
+  init with a default `decoderLayers: Int = 2` (`TdtDecoderState.swift:32`),
+  fresh per call is correct for our stateless batch use (no cross-utterance
+  decoder state to carry). `ASRResult.text: String` is the transcript
+  (`AsrTypes.swift:90`).
+- `FluidAudio.Language` exists as documented in CLAUDE.md's existing gotcha
+  (`Shared/TokenLanguageFilter.swift:4`, `public enum Language: String, Sendable, CaseIterable`) —
+  confirms the `FabCore.Language` qualification requirement is still correct
+  and unchanged. **New sub-finding:** `AsrManager.transcribe`'s `language:`
+  parameter is typed `FluidAudio.Language?`, not a plain `String?` (unlike
+  WhisperKit's backend, which takes `language?.rawValue` directly) — Task 5
+  bridges with `language.flatMap { Language(rawValue: $0.rawValue) }`.
+- **`FluidAudio.Language` qualification is a bigger gotcha than CLAUDE.md's
+  existing entry implies (new finding, empirically verified in a throwaway
+  SwiftPM package against the real v0.15.4 checkout — not just source
+  reading):** FluidAudio ships a deliberate namespace shim,
+  `public struct FluidAudio {}` (`FluidAudioSwift.swift:29`; its own comment
+  says "creates a namespace collision"). Once both `FabCore` and `FluidAudio`
+  are imported in the same file, **`FluidAudio.Language(...)` does not
+  compile** — the compiler resolves `FluidAudio.` to that empty struct, not
+  the module, and reports `type 'FluidAudio' has no member 'Language'`. A
+  plain unqualified `Language` is ambiguous between `FabCore.Language` and
+  FluidAudio's `Language` and fails to compile too. The fix verified to
+  actually work: add `import enum FluidAudio.Language` (a scoped/declaration
+  import) alongside the ordinary `import FluidAudio` — this brings the
+  module's `Language` into unqualified scope with the specificity needed to
+  win over `FabCore.Language`, and code refers to it as bare `Language`
+  (never `FluidAudio.Language`). Task 5's `ParakeetBackend.swift` uses this;
+  Task 11's CLAUDE.md gotcha update should mention the scoped-import
+  workaround, not just "qualify with FabCore.Language" (which remains
+  correct for FabCore's side but is incomplete advice for FluidAudio's side).
 
 ---
 
@@ -58,8 +167,12 @@ In `Package.swift` dependencies array, after the GRDB entry:
         // FluidAudio: Parakeet (TDT v3 batch, EOU 120M streaming) compiled
         // to CoreML. Used for model loading + decode only; downloads and
         // install management stay ours (ParakeetLayout/ModelManager).
-        .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "<TAG FROM STEP 1>"),
+        .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.15.4"),
 ```
+
+(Step 1 result: `v0.15.4` was the highest stable tag — `git ls-remote --tags`
+sorted alphabetically is misleading past v0.9→v0.10; pipe through
+`sort -V` to get true semver order.)
 
 In the TranscriptionEngine target:
 
@@ -156,7 +269,9 @@ In `Sources/FabCore/ModelDescriptor.swift`, after the `appleSpeech` descriptor:
     public static let parakeetV3 = ModelDescriptor(
         id: "parakeet-tdt-0.6b-v3",
         displayName: "Parakeet v3",
-        approximateSizeMB: 1100  // (Task 1) correct from real download size
+        // Task 1 finding: v3 (~461 MB) + EOU 160ms (~214 MB) required files,
+        // measured via HuggingFace's tree API (not yet a local download).
+        approximateSizeMB: 674
     )
 ```
 
@@ -247,7 +362,7 @@ git commit -m "feat: parakeet engine kind + catalog split with unified descripto
 - Test: `Tests/TranscriptionEngineTests/ParakeetLayoutTests.swift`
 
 **Interfaces:**
-- Produces: `ParakeetLayout.v3Repo: String`, `ParakeetLayout.eouRepo: String`, `ParakeetLayout.repoRoot(_:downloadBase:) -> URL`, `ParakeetLayout.isInstalled(downloadBase:) -> Bool`, `ParakeetLayout.sizeOnDisk(downloadBase:) -> Int64?`, `ParakeetLayout.delete(downloadBase:) throws`.
+- Produces: `ParakeetLayout.v3Repo: String` / `ParakeetLayout.eouRepo: String` (HuggingFace IDs, reference only), `ParakeetLayout.v3FolderName: String` / `ParakeetLayout.eouFolderName: String` (the on-disk leaf names FluidAudio actually uses — Task 1 finding), `ParakeetLayout.repoRoot(_:downloadBase:) -> URL`, `ParakeetLayout.isInstalled(downloadBase:) -> Bool`, `ParakeetLayout.sizeOnDisk(downloadBase:) -> Int64?`, `ParakeetLayout.delete(downloadBase:) throws`.
 - Consumes: nothing new (pure Foundation + FabCore).
 
 - [ ] **Step 1: Write the failing tests**
@@ -262,11 +377,13 @@ import Testing
 
 struct ParakeetLayoutTests {
     /// Repo roots follow the same hub-shaped tree as Whisper's:
-    /// <base>/models/<org>/<repo>/
+    /// <base>/models/FluidInference/<folderName>/. `folderName` (not the HF
+    /// repo ID) because that's the leaf FluidAudio's own load/download path
+    /// derivation requires (Task 1 finding).
     @Test func repoRootMatchesHubShape() {
         let base = URL(fileURLWithPath: "/tmp/x")
-        let root = ParakeetLayout.repoRoot(ParakeetLayout.v3Repo, downloadBase: base)
-        #expect(root.path == "/tmp/x/models/\(ParakeetLayout.v3Repo)")
+        let root = ParakeetLayout.repoRoot(ParakeetLayout.v3FolderName, downloadBase: base)
+        #expect(root.path == "/tmp/x/models/FluidInference/\(ParakeetLayout.v3FolderName)")
     }
 
     @Test func notInstalledWhenDirectoriesMissing() throws {
@@ -282,7 +399,7 @@ struct ParakeetLayoutTests {
         defer { try? FileManager.default.removeItem(at: base) }
 
         for file in ParakeetLayout.v3RequiredComponents {
-            let url = ParakeetLayout.repoRoot(ParakeetLayout.v3Repo, downloadBase: base)
+            let url = ParakeetLayout.repoRoot(ParakeetLayout.v3FolderName, downloadBase: base)
                 .appendingPathComponent(file)
             try FileManager.default.createDirectory(
                 at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -292,7 +409,7 @@ struct ParakeetLayoutTests {
         #expect(ParakeetLayout.isInstalled(downloadBase: base) == false)
 
         for file in ParakeetLayout.eouRequiredComponents {
-            let url = ParakeetLayout.repoRoot(ParakeetLayout.eouRepo, downloadBase: base)
+            let url = ParakeetLayout.repoRoot(ParakeetLayout.eouFolderName, downloadBase: base)
                 .appendingPathComponent(file)
             try FileManager.default.createDirectory(
                 at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -313,49 +430,70 @@ Expected: FAIL — `ParakeetLayout` doesn't exist.
 
 - [ ] **Step 3: Implement**
 
-Create `Sources/TranscriptionEngine/ParakeetLayout.swift`. Repo IDs and component lists come from Task 1 findings — the values below are the provisional defaults:
+Create `Sources/TranscriptionEngine/ParakeetLayout.swift`. Repo IDs and component
+lists are Task 1 findings (resolved values, not provisional — see the findings
+block above for citations):
 
 ```swift
 import FabCore
 import Foundation
 
 /// Where Parakeet's two model sets live on disk and what "installed" means.
-/// Sibling of `ModelLayout` (Whisper): same hub-shaped tree
-/// (<base>/models/<org>/<repo>/), different repos, flat repo layout (the
-/// CoreML bundles sit at the repo root — no per-variant subfolder).
-/// FluidAudio loads FROM these directories; it never manages them.
+/// Sibling of `ModelLayout` (Whisper): same `<base>/models/…` tree, but the
+/// leaf directory names are FluidAudio's own `Repo.folderName` values, NOT
+/// the HuggingFace repo IDs — `AsrModels.load(from:)`/`download(to:)` and
+/// `StreamingEouAsrManager.loadModels` both discard whatever leaf directory
+/// name they're given and re-derive it from `folderName` internally (Task 1
+/// finding), so our roots must already match that name for the directory
+/// FluidAudio actually reads/writes to line up with the one `ParakeetLayout`
+/// checks. Flat repo layout: the CoreML bundles sit at the repo root, no
+/// per-variant subfolder (the EOU chunk-size tier is baked into the folder
+/// name itself). FluidAudio loads FROM these directories; it never manages
+/// them.
 public enum ParakeetLayout {
-    // (Task 1) verify both repo IDs against FluidAudio's source.
+    /// HuggingFace repo ID — for reference/logging only; NOT the on-disk
+    /// folder name (see `v3FolderName`/`eouFolderName`).
     public static let v3Repo = "FluidInference/parakeet-tdt-0.6b-v3-coreml"
-    public static let eouRepo = "FluidInference/parakeet-eou-120m-coreml"
+    public static let eouRepo = "FluidInference/parakeet-realtime-eou-120m-coreml/160ms"
 
-    // (Task 1) fill from FluidAudio's model-name constants.
+    /// `AsrModelVersion.v3.repo.folderName` — the literal leaf directory
+    /// FluidAudio's ASR loader/downloader derives and requires.
+    public static let v3FolderName = "parakeet-tdt-0.6b-v3"
+    /// `Repo.parakeetEou160.folderName` — the literal leaf directory
+    /// FluidAudio's EOU streaming loader/downloader derives and requires
+    /// (160ms chunk size, our default).
+    public static let eouFolderName = "parakeet-eou-streaming/160ms"
+
     public static let v3RequiredComponents = [
-        "Melspectrogram.mlmodelc",
-        "ParakeetEncoder.mlmodelc",
-        "ParakeetDecoder.mlmodelc",
-        "RNNTJoint.mlmodelc",
-        "parakeet_vocab.json",
-    ]
-    public static let eouRequiredComponents = [
         "Preprocessor.mlmodelc",
         "Encoder.mlmodelc",
         "Decoder.mlmodelc",
+        "JointDecisionv3.mlmodelc",
+        "parakeet_vocab.json",
+    ]
+    public static let eouRequiredComponents = [
+        "streaming_encoder.mlmodelc",
+        "decoder.mlmodelc",
+        "joint_decision.mlmodelc",
+        "vocab.json",
     ]
 
-    public static func repoRoot(_ repoID: String, downloadBase: URL) -> URL {
+    /// `folderName` is FluidAudio's own directory name (see above), not the
+    /// HuggingFace repo ID — pass `v3FolderName`/`eouFolderName` here.
+    public static func repoRoot(_ folderName: String, downloadBase: URL) -> URL {
         downloadBase
             .appendingPathComponent("models", isDirectory: true)
-            .appendingPathComponent(repoID, isDirectory: true)
+            .appendingPathComponent("FluidInference", isDirectory: true)
+            .appendingPathComponent(folderName, isDirectory: true)
     }
 
     public static func isInstalled(downloadBase: URL) -> Bool {
-        isComplete(repo: v3Repo, components: v3RequiredComponents, downloadBase: downloadBase)
-            && isComplete(repo: eouRepo, components: eouRequiredComponents, downloadBase: downloadBase)
+        isComplete(folderName: v3FolderName, components: v3RequiredComponents, downloadBase: downloadBase)
+            && isComplete(folderName: eouFolderName, components: eouRequiredComponents, downloadBase: downloadBase)
     }
 
-    private static func isComplete(repo: String, components: [String], downloadBase: URL) -> Bool {
-        let root = repoRoot(repo, downloadBase: downloadBase)
+    private static func isComplete(folderName: String, components: [String], downloadBase: URL) -> Bool {
+        let root = repoRoot(folderName, downloadBase: downloadBase)
         return components.allSatisfy {
             FileManager.default.fileExists(atPath: root.appendingPathComponent($0).path)
         }
@@ -363,7 +501,7 @@ public enum ParakeetLayout {
 
     /// Sum of both repo directories, or nil when neither exists.
     public static func sizeOnDisk(downloadBase: URL) -> Int64? {
-        let roots = [v3Repo, eouRepo].map { repoRoot($0, downloadBase: downloadBase) }
+        let roots = [v3FolderName, eouFolderName].map { repoRoot($0, downloadBase: downloadBase) }
         var total: Int64 = 0
         var found = false
         for root in roots {
@@ -378,10 +516,12 @@ public enum ParakeetLayout {
         return found ? total : nil
     }
 
-    /// Removes both repo directories (missing ones are fine).
+    /// Removes both repo directories (missing ones are fine). For the EOU
+    /// tree this only removes the `160ms` leaf, not sibling chunk-size
+    /// variants (we never install those).
     public static func delete(downloadBase: URL) throws {
-        for repo in [v3Repo, eouRepo] {
-            let root = repoRoot(repo, downloadBase: downloadBase)
+        for folderName in [v3FolderName, eouFolderName] {
+            let root = repoRoot(folderName, downloadBase: downloadBase)
             if FileManager.default.fileExists(atPath: root.path) {
                 try FileManager.default.removeItem(at: root)
             }
@@ -430,12 +570,12 @@ Append to `ParakeetLayoutTests.swift`:
 
         #expect(await manager.isInstalled(.parakeetV3) == false)
 
-        for (repo, components) in [
-            (ParakeetLayout.v3Repo, ParakeetLayout.v3RequiredComponents),
-            (ParakeetLayout.eouRepo, ParakeetLayout.eouRequiredComponents),
+        for (folderName, components) in [
+            (ParakeetLayout.v3FolderName, ParakeetLayout.v3RequiredComponents),
+            (ParakeetLayout.eouFolderName, ParakeetLayout.eouRequiredComponents),
         ] {
             for file in components {
-                let url = ParakeetLayout.repoRoot(repo, downloadBase: base)
+                let url = ParakeetLayout.repoRoot(folderName, downloadBase: base)
                     .appendingPathComponent(file)
                 try FileManager.default.createDirectory(
                     at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -493,7 +633,7 @@ In `Sources/TranscriptionEngine/ModelManager.swift`, add a private helper and br
                 throw ManagerError.incompleteDownload(model.id)
             }
             progress(1.0)
-            return ParakeetLayout.repoRoot(ParakeetLayout.v3Repo, downloadBase: downloadBase)
+            return ParakeetLayout.repoRoot(ParakeetLayout.v3FolderName, downloadBase: downloadBase)
         }
 ```
 
@@ -519,7 +659,9 @@ In `Sources/TranscriptionEngine/ModelManager.swift`, add a private helper and br
 
 - [ ] **Step 4: Implement ParakeetInstaller**
 
-Create `Sources/TranscriptionEngine/ParakeetInstaller.swift`. The exact FluidAudio call is a Task 1 finding; the expected shape (custom-destination download exists):
+Create `Sources/TranscriptionEngine/ParakeetInstaller.swift`. Task 1 verified both
+FluidAudio download calls against the checked-out source (custom-destination
+download exists for both repos — no taught-location fallback needed):
 
 ```swift
 import FabCore
@@ -530,29 +672,47 @@ import Foundation
 /// `ParakeetLayout` owns install-state and the Models tab shows progress.
 /// FluidAudio performs the transfer; we choose the destination.
 ///
-/// FluidAudio's download API reports no fractional progress (Task 1
-/// finding — adjust if it does): report a two-step coarse fraction so the
-/// Models-tab bar still moves.
+/// Both downloads report real fractional `DownloadUtils.DownloadProgress`
+/// (Task 1 finding), scaled into the two-thirds-v3/one-third-EOU split below
+/// so the Models-tab bar reflects the (larger) v3 download's actual
+/// progress rather than jumping in two coarse steps.
 public enum ParakeetInstaller {
     public static func download(
         to downloadBase: URL,
         progress: @escaping @Sendable (Double) -> Void
     ) async throws {
-        progress(0.05)
-        // (Task 1) replace with the verified FluidAudio download call for
-        // the v3 repo targeting ParakeetLayout.repoRoot(ParakeetLayout.v3Repo,
-        // downloadBase:). If no custom-destination API exists, switch to the
-        // taught-location strategy: delete this file's destination handling,
-        // point ParakeetLayout's roots at FluidAudio's cache directory, and
-        // call the cache-filling download here instead.
+        // v3 (~461 MB) — AsrModels.download(to:) discards the last path
+        // component of `to:` and re-derives it from `version.repo.folderName`
+        // (Task 1 finding), so `repoRoot` must already end in that folder
+        // name for the directory FluidAudio actually writes to match what
+        // ParakeetLayout checks.
         try await AsrModels.download(
+            to: ParakeetLayout.repoRoot(ParakeetLayout.v3FolderName, downloadBase: downloadBase),
             version: .v3,
-            to: ParakeetLayout.repoRoot(ParakeetLayout.v3Repo, downloadBase: downloadBase)
+            progressHandler: { downloadProgress in
+                progress(downloadProgress.fractionCompleted * 0.7)
+            }
         )
-        progress(0.85)
-        // (Task 1) same for the EOU 120M streaming models.
-        try await StreamingEouAsrModels.download(
-            to: ParakeetLayout.repoRoot(ParakeetLayout.eouRepo, downloadBase: downloadBase)
+        // EOU 160ms (~214 MB) — no standalone static download-only function
+        // exists (Task 1 finding); `StreamingEouAsrManager.loadModels(to:)`
+        // downloads AND loads CoreML models we'd have to immediately
+        // discard, so call the lower-level `DownloadUtils.downloadRepo`
+        // directly instead (also `public`, also used internally by
+        // `loadModels(to:)`) against the *parent* of the EOU repo root —
+        // it appends `Repo.parakeetEou160.folderName` (`"parakeet-eou-streaming/160ms"`)
+        // itself, so passing `.../models/FluidInference` (one
+        // `deletingLastPathComponent()` off the v3 root, since
+        // `v3FolderName` has no internal slash) reproduces exactly
+        // `ParakeetLayout.repoRoot(ParakeetLayout.eouFolderName, downloadBase:)`.
+        let fluidInferenceDir = ParakeetLayout
+            .repoRoot(ParakeetLayout.v3FolderName, downloadBase: downloadBase)
+            .deletingLastPathComponent()
+        try await DownloadUtils.downloadRepo(
+            .parakeetEou160,
+            to: fluidInferenceDir,
+            progressHandler: { downloadProgress in
+                progress(0.7 + downloadProgress.fractionCompleted * 0.3)
+            }
         )
         progress(1.0)
     }
@@ -583,7 +743,7 @@ git commit -m "feat: ModelManager install/verify/delete/download for Parakeet"
 - Test: `Tests/TranscriptionEngineTests/ParakeetBackendTests.swift`
 
 **Interfaces:**
-- Consumes: `ParakeetLayout` (Task 3), `TranscriptionBackend` protocol, FluidAudio `AsrModels.load(from:configuration:version:)`, `AsrManager`.
+- Consumes: `ParakeetLayout` (Task 3), `TranscriptionBackend` protocol, FluidAudio `AsrModels.load(from:configuration:version:encoderPrecision:encoderComputeUnits:progressHandler:)`, `AsrManager`, `TdtDecoderState`.
 - Produces: `public actor ParakeetBackend: TranscriptionBackend` with `init(modelsDirectory: URL = FabPaths.modelsDirectory)`, `load(model:)`, `transcribe(_:language:onProgress:)`, `unload()`. Task 7 adds the streaming conformance to this same actor.
 
 - [ ] **Step 1: Write the failing tests**
@@ -632,12 +792,19 @@ Create `Sources/TranscriptionEngine/ParakeetBackend.swift`:
 ```swift
 import FabCore
 import FluidAudio
+// Scoped import, NOT `import FluidAudio` alone (Task 1 finding — see
+// findings block): FluidAudio ships `public struct FluidAudio {}` as a
+// deliberate namespace shim (`FluidAudioSwift.swift:29`, its own comment
+// calls out the collision), which shadows `FluidAudio.Language` as "member
+// `Language` of struct `FluidAudio`" instead of "the module's `Language`
+// type" the moment both `FabCore` and `FluidAudio` are imported in the same
+// file — `FluidAudio.Language(...)` fails to compile with "type 'FluidAudio'
+// has no member 'Language'". This scoped import brings the module's
+// `Language` enum into unqualified scope with the priority needed to
+// disambiguate against `FabCore.Language`; empirically verified against a
+// real FluidAudio v0.15.4 checkout in a throwaway SwiftPM package.
+import enum FluidAudio.Language
 import Foundation
-
-// (Task 1) Only if the compiler demands it (FluidAudio types crossing this
-// actor's boundary without a Sendable conformance), mirror the WhisperKit
-// pattern — every instance stays confined to the ParakeetBackend actor:
-// extension AsrManager: @retroactive @unchecked Sendable {}
 
 /// NVIDIA Parakeet running on CoreML via FluidAudio.
 ///
@@ -647,7 +814,13 @@ import Foundation
 /// FluidAudio only loads from there.
 ///
 /// FluidAudio declares its own `Language`; always qualify `FabCore.Language`
-/// in this file.
+/// in this file, and refer to FluidAudio's via the unqualified `Language`
+/// name brought in by the `import enum FluidAudio.Language` line above (see
+/// that comment for why `FluidAudio.Language` itself does not compile).
+/// `AsrManager` and `StreamingEouAsrManager` (Task 7) are FluidAudio
+/// `actor`s — Sendable by the language, no `@retroactive @unchecked
+/// Sendable` workaround needed (Task 1 finding; unlike `WhisperKit`, which
+/// is a plain `class`).
 public actor ParakeetBackend: TranscriptionBackend {
     private var manager: AsrManager?
     private let modelsDirectory: URL
@@ -661,8 +834,13 @@ public actor ParakeetBackend: TranscriptionBackend {
             throw TranscriptionError.modelNotLoaded
         }
         if manager != nil { return }
+        // `AsrModels.load(from:)` discards the last path component of
+        // `from:` and re-derives it from `version.repo.folderName`
+        // internally (Task 1 finding) — `repoRoot` already ends in
+        // `v3FolderName` so this lines up with what `ParakeetInstaller`
+        // downloaded to.
         let models = try await AsrModels.load(
-            from: ParakeetLayout.repoRoot(ParakeetLayout.v3Repo, downloadBase: modelsDirectory),
+            from: ParakeetLayout.repoRoot(ParakeetLayout.v3FolderName, downloadBase: modelsDirectory),
             configuration: AsrModels.defaultConfiguration(),
             version: .v3
         )
@@ -686,7 +864,27 @@ public actor ParakeetBackend: TranscriptionBackend {
         // No progress polling: v3 decodes at ~190× real time, so even a
         // minute of audio finishes inside one progress-UI repaint.
         // `language: nil` = auto-detect (there is no app language setting).
-        let result = try await manager.transcribe(audio.samples)
+        //
+        // Task 1 finding: every `AsrManager.transcribe` overload requires an
+        // externalized `decoderState: inout TdtDecoderState` — there is no
+        // zero-argument `transcribe(samples)`. A fresh `TdtDecoderState()`
+        // per call is correct here: our batch path is one utterance per
+        // call with no cross-utterance decoder state to carry (unlike
+        // `ParakeetStreamingSession`, Task 7, which is inherently stateful
+        // across chunks but owns its own FluidAudio-internal state instead).
+        //
+        // FluidAudio declares its own `Language` enum (distinct from
+        // `FabCore.Language`, a RawRepresentable string wrapper) — bridge by
+        // rawValue; an unrecognized/nil code falls through to FluidAudio's
+        // auto-detect (nil), which is also our own "no hint" meaning.
+        // Unqualified `Language` here resolves to FluidAudio's type via the
+        // file's `import enum FluidAudio.Language` line — `FluidAudio.Language`
+        // itself does NOT compile once `FabCore` is also imported (Task 1
+        // finding, see the file-top comment).
+        var decoderState = try TdtDecoderState()
+        let fluidLanguage: Language? = language.flatMap { Language(rawValue: $0.rawValue) }
+        let result = try await manager.transcribe(
+            audio.samples, decoderState: &decoderState, language: fluidLanguage)
         return Transcript(
             text: result.text.trimmingCharacters(in: .whitespacesAndNewlines),
             audioDuration: audio.duration
@@ -705,7 +903,7 @@ Run: `cd /Users/kal/fabulous && swift test --filter ParakeetBackendTests`
 Expected: PASS.
 
 Run: `cd /Users/kal/fabulous && swift build --arch arm64`
-Expected: zero warnings. If strict concurrency rejects `AsrManager` crossing the actor boundary, add the `@retroactive @unchecked Sendable` extension from the file-top comment and re-verify.
+Expected: zero warnings — no `@retroactive @unchecked Sendable` needed (Task 1 finding: both FluidAudio manager types are actors).
 
 - [ ] **Step 5: Commit**
 
@@ -906,11 +1104,19 @@ extend `load(model:)` — after `manager = loaded`:
         // batch-only Parakeet (sessions just won't open) instead of failing
         // the whole engine.
         do {
-            // (Task 1) verified init + custom-directory load. Debounce is
-            // farcically high: the hotkey ends utterances, never silence.
+            // Task 1 finding: `eouDebounceMs` is a plain `Int`, default
+            // 1280, no compiled ceiling — 600_000 (10 min) is safely usable
+            // and never fires mid-dictation; the hotkey ends utterances, not
+            // silence detection. `loadModels(from:)` (Task 1 finding) loads
+            // flat files directly from the given directory (no folderName
+            // re-derivation, unlike the v3 ASR path) — it must directly
+            // contain `streaming_encoder.mlmodelc`, `decoder.mlmodelc`,
+            // `joint_decision.mlmodelc`, `vocab.json`, which is exactly what
+            // `ParakeetLayout.repoRoot(eouFolderName, downloadBase:)` +
+            // `ParakeetInstaller`'s `DownloadUtils.downloadRepo` produce.
             let streaming = StreamingEouAsrManager(chunkSize: .ms160, eouDebounceMs: 600_000)
             try await streaming.loadModels(
-                from: ParakeetLayout.repoRoot(ParakeetLayout.eouRepo, downloadBase: modelsDirectory)
+                from: ParakeetLayout.repoRoot(ParakeetLayout.eouFolderName, downloadBase: modelsDirectory)
             )
             streamingManager = streaming
         } catch {
@@ -1137,7 +1343,10 @@ Replace the footer text (`SettingsView.swift:314`):
                 Text("Models run entirely on this Mac. Downloads come from Hugging Face (argmaxinc/whisperkit-coreml for Whisper, FluidInference for Parakeet) into ~/Library/Application Support/fabulous/models/.")
 ```
 
-(If Task 1 chose the taught-location strategy, name FluidAudio's cache directory here instead.)
+(Task 1 resolved this to our own tree, not FluidAudio's cache — `ParakeetInstaller`
+targets `ParakeetLayout`'s roots under our `models/` directory directly, no
+taught-location fallback needed. This footer copy is already correct as
+written above; no change needed here.)
 
 - [ ] **Step 3: Build + manual GUI check**
 
@@ -1239,7 +1448,7 @@ git commit -m "test: conditional real-engine Parakeet decode tests (FAB_REAL_ASR
 
 - Layout, TranscriptionEngine bullet: add `ParakeetBackend` actor + `ParakeetLayout`/`ParakeetInstaller` mention.
 - Dependency rule line: change to "`TranscriptionEngine` is the only target importing WhisperKit and FluidAudio."
-- Gotchas: add — "**FluidAudio name collisions**: it declares its own `Language` (vs `FabCore.Language`); qualify in any file importing both. **Parakeet streams with a different model**: streaming = EOU 120M, batch/fallback = TDT v3; both install under `models/models/FluidInference/…` via `ParakeetInstaller`, checked by `ParakeetLayout` (NOT `ModelLayout`)."
+- Gotchas: add — "**FluidAudio name collisions**: it declares its own `Language` (vs `FabCore.Language`), and it ALSO ships `public struct FluidAudio {}` as a deliberate namespace shim — so `FluidAudio.Language(...)` does NOT compile once both modules are imported in one file (resolves to 'member of struct FluidAudio', not the module). Fix: add `import enum FluidAudio.Language` alongside the plain `import FluidAudio`, then refer to it as bare `Language`; qualify FabCore's side as `FabCore.Language` as usual. **Parakeet streams with a different model**: streaming = EOU 120M, batch/fallback = TDT v3; both install under `models/models/FluidInference/…` via `ParakeetInstaller`, checked by `ParakeetLayout` (NOT `ModelLayout`), and the on-disk leaf directory names are FluidAudio's own `Repo.folderName` values (e.g. `parakeet-tdt-0.6b-v3`, `parakeet-eou-streaming/160ms`) — NOT the HuggingFace repo IDs; FluidAudio's own load/download calls discard whatever leaf name you pass and re-derive it from `folderName`."
 - State/roadmap: move Parakeet from "Not yet built" into the done list with one line; note the dogfood decision pending (stay-120M / hybrid / batch-only).
 
 - [ ] **Step 2: architecture.md + spec status**

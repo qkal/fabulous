@@ -16,6 +16,10 @@ let package = Package(
         // GRDB: SQLite for the local transcript history. Chosen over raw
         // sqlite3 for migrations + record types; no server, no ORM magic.
         .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.11.1"),
+        // FluidAudio: Parakeet (TDT v3 batch, EOU 120M streaming) compiled
+        // to CoreML. Used for model loading + decode only; downloads and
+        // install management stay ours (ParakeetLayout/ModelManager).
+        .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.15.4"),
     ],
     targets: [
         // Shared value types (AudioBuffer, Transcript, ModelDescriptor, …)
@@ -34,6 +38,7 @@ let package = Package(
             dependencies: [
                 "FabCore",
                 .product(name: "WhisperKit", package: "WhisperKit"),
+                .product(name: "FluidAudio", package: "FluidAudio"),
             ]
         ),
 
