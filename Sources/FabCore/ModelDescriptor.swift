@@ -46,6 +46,17 @@ public struct ModelDescriptor: Sendable, Equatable, Codable {
         displayName: "Apple Speech",
         approximateSizeMB: 0
     )
+
+    /// NVIDIA Parakeet via FluidAudio (CoreML). One catalog entry covers
+    /// BOTH model sets it needs: TDT 0.6b v3 (batch decode + fallback) and
+    /// EOU 120M (streaming). Size is their sum.
+    public static let parakeetV3 = ModelDescriptor(
+        id: "parakeet-tdt-0.6b-v3",
+        displayName: "Parakeet v3",
+        // Task 1 finding: v3 (~461 MB) + EOU 160ms (~214 MB) required files,
+        // measured via HuggingFace's tree API (not yet a local download).
+        approximateSizeMB: 674
+    )
 }
 
 /// Which ASR engine turns audio into text. A user preference; the Whisper
@@ -54,24 +65,36 @@ public enum TranscriptionEngineKind: String, Sendable, Codable, CaseIterable {
     case whisper
     /// Apple SpeechAnalyzer — experimental, macOS 26+ only.
     case appleSpeech = "apple-speech"
+    /// Parakeet via FluidAudio — experimental. Streams with the EOU 120M
+    /// model; batch/fallback decodes with TDT 0.6b v3.
+    case parakeet
 
     public var displayName: String {
         switch self {
         case .whisper: "Whisper"
         case .appleSpeech: "Apple Speech (experimental)"
+        case .parakeet: "Parakeet (experimental)"
         }
     }
 }
 
 /// The models fabulous offers in the UI, best first.
 public enum ModelCatalog {
-    public static let all: [ModelDescriptor] = [
+    /// Whisper model variants — the choice `selectedModelID` ranges over.
+    public static let whisperVariants: [ModelDescriptor] = [
         .whisperLargeV3Turbo, .whisperSmall, .whisperBase,
     ]
 
+    /// Everything the Models tab shows (downloadable/deletable on disk).
+    /// Apple Speech is absent by design: its assets are OS-managed.
+    public static let all: [ModelDescriptor] = whisperVariants + [.parakeetV3]
+
     public static let recommended: ModelDescriptor = .whisperLargeV3Turbo
 
+    /// Resolves any engine/model ID we ever persist (history rows, menu
+    /// stats) — including Apple Speech, which is not in `all`.
     public static func descriptor(withID id: String) -> ModelDescriptor? {
-        all.first { $0.id == id }
+        if id == ModelDescriptor.appleSpeech.id { return .appleSpeech }
+        return all.first { $0.id == id }
     }
 }

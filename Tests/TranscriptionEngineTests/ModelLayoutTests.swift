@@ -87,4 +87,22 @@ struct ModelLayoutTests {
         #expect(ModelCatalog.descriptor(withID: "base") == .whisperBase)
         #expect(ModelCatalog.descriptor(withID: "nope") == nil)
     }
+
+    @Test func catalogSplitsWhisperVariantsFromParakeet() {
+        #expect(ModelCatalog.whisperVariants == [.whisperLargeV3Turbo, .whisperSmall, .whisperBase])
+        #expect(!ModelCatalog.whisperVariants.contains(.parakeetV3))
+        #expect(ModelCatalog.all.contains(.parakeetV3))
+    }
+
+    @Test func descriptorLookupCoversAllEngines() {
+        #expect(ModelCatalog.descriptor(withID: "parakeet-tdt-0.6b-v3") == .parakeetV3)
+        #expect(ModelCatalog.descriptor(withID: "apple-speech") == .appleSpeech)
+        #expect(ModelCatalog.descriptor(withID: "base") == .whisperBase)
+        #expect(ModelCatalog.descriptor(withID: "nope") == nil)
+    }
+
+    @Test func parakeetEngineKindRoundTrips() {
+        #expect(TranscriptionEngineKind(rawValue: "parakeet") == .parakeet)
+        #expect(TranscriptionEngineKind.parakeet.displayName == "Parakeet (experimental)")
+    }
 }

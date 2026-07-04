@@ -33,8 +33,10 @@ SwiftPM targets, one directory each under `Sources/`:
   NSEvent global monitor fallback. `HotkeySpec` = mode + modifier.
 - `TranscriptionEngine` — `TranscriptionBackend` protocol,
   `WhisperKitBackend` actor, `SpeechAnalyzerBackend` actor (macOS 26+,
-  OS-managed assets), `ModelManager` actor + `ModelLayout`
-  (install/verify/delete on disk; hub snapshot path shape lives here).
+  OS-managed assets), `ParakeetBackend` actor + `ParakeetLayout`/`ParakeetInstaller`
+  (Parakeet TDT 0.6b v3 batch + EOU 120M streaming via FluidAudio),
+  `ModelManager` actor + `ModelLayout` (install/verify/delete on disk;
+  hub snapshot path shape lives here).
 - `TextInjector` — `StrategySelector` (pure, tested) picks
   axInsert → paste → keystrokes chain; `TextInjector` (@MainActor) executes.
 - `HistoryStore` — GRDB/SQLite transcript history (`TranscriptEntry`),
@@ -48,7 +50,8 @@ SwiftPM targets, one directory each under `Sources/`:
   permissions, `SettingsStore` (UserDefaults), `ConnectivityMonitor`.
 
 Dependency rule: feature modules depend only on FabCore; only FabulousApp
-sees everything. `TranscriptionEngine` is the only target importing WhisperKit.
+sees everything. `TranscriptionEngine` is the only target importing WhisperKit
+and FluidAudio.
 
 ## Gotchas (hard-won)
 
@@ -62,6 +65,20 @@ sees everything. `TranscriptionEngine` is the only target importing WhisperKit.
   `errSecInternalComponent`, the keychain locked (sleep does this despite
   no-auto-lock settings): `security unlock-keychain -p fabulous-dev-local
   ~/Library/Keychains/fabulous-dev.keychain-db`.
+- **FluidAudio name collisions**: it declares its own `Language` (vs
+  `FabCore.Language`), and it ALSO ships `public struct FluidAudio {}` as a
+  deliberate namespace shim — so `FluidAudio.Language(...)` does NOT compile
+  once both modules are imported in one file (resolves to 'member of struct
+  FluidAudio', not the module). Fix: add `import enum FluidAudio.Language`
+  alongside the plain `import FluidAudio`, then refer to it as bare `Language`;
+  qualify FabCore's side as `FabCore.Language` as usual. **Parakeet streams
+  with a different model**: streaming = EOU 120M, batch/fallback = TDT v3;
+  both install under `models/models/FluidInference/…` via `ParakeetInstaller`,
+  checked by `ParakeetLayout` (NOT `ModelLayout`), and the on-disk leaf
+  directory names are FluidAudio's own `Repo.folderName` values (e.g.
+  `parakeet-tdt-0.6b-v3`, `parakeet-eou-streaming/160ms`) — NOT the
+  HuggingFace repo IDs; FluidAudio's own load/download calls discard whatever
+  leaf name you pass and re-derive it from `folderName` internally.
 - **`AudioBuffer` name collision**: CoreAudio has one too. In files importing
   AVFoundation, write `FabCore.AudioBuffer`.
 - **WhisperKit's `EnergyVAD`**: WhisperKit also declares `EnergyVAD`. Ours
@@ -172,7 +189,8 @@ per-dictation DeliveryMethod (axInsert/paste/keystrokes/safetyNet) in
 metrics + menu "Inject" stats line;
 per-app injection overrides (docs/specs/per-app-overrides.md): Apps
 settings tab, AppOverride user entries layered over built-in terminal
-defaults (user wins, delete reverts), injector selector swapped live.
-
-Not yet built: Parakeet/FluidAudio backend (only if SpeechAnalyzer
-disappoints). See docs/architecture.md and docs/specs/.
+defaults (user wins, delete reverts), injector selector swapped live;
+Parakeet/FluidAudio backend (docs/specs/parakeet-backend.md): TDT 0.6b v3
+batch + EOU 120M streaming, third engine picker option, gated Models-tab
+management, shipped 2026-07-04, dogfood decision pending (stay-120M / hybrid
+/ batch-only).

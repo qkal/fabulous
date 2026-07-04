@@ -168,18 +168,16 @@ private struct GeneralSettingsPane: View {
                 Toggle("Play sound when recording starts and stops", isOn: $store.soundCuesEnabled)
             }
 
-            if #available(macOS 26.0, *) {
-                Section("Transcription") {
-                    Picker("Engine", selection: $store.transcriptionEngine) {
-                        ForEach(TranscriptionEngineKind.allCases, id: \.self) { kind in
-                            Text(kind.displayName).tag(kind)
-                        }
+            Section("Transcription") {
+                Picker("Engine", selection: $store.transcriptionEngine) {
+                    ForEach(availableEngines, id: \.self) { kind in
+                        Text(kind.displayName).tag(kind)
                     }
-                    .pickerStyle(.radioGroup)
-                    Text("Apple Speech uses the system's on-device recognizer — faster, but accuracy may differ. Whisper models are picked in the Models tab.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
                 }
+                .pickerStyle(.radioGroup)
+                Text("Whisper models are picked in the Models tab. Apple Speech uses the system's on-device recognizer. Parakeet downloads its models on first use — faster, but experimental.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Clean up with Apple Intelligence") {
@@ -277,6 +275,16 @@ private struct GeneralSettingsPane: View {
         store.llmVocabulary.append(term)
         newVocabularyTerm = ""
     }
+
+    /// Apple Speech requires the macOS 26 SpeechAnalyzer; the other
+    /// engines run on this package's macOS 14 floor.
+    private var availableEngines: [TranscriptionEngineKind] {
+        TranscriptionEngineKind.allCases.filter { kind in
+            guard kind == .appleSpeech else { return true }
+            if #available(macOS 26.0, *) { return true }
+            return false
+        }
+    }
 }
 
 // MARK: - Models
@@ -311,7 +319,7 @@ private struct ModelsSettingsPane: View {
                 }
             }
             Section {
-                Text("Models run entirely on this Mac. Downloads come from Hugging Face (argmaxinc/whisperkit-coreml) into ~/Library/Application Support/fabulous/models/.")
+                Text("Models run entirely on this Mac. Downloads come from Hugging Face (argmaxinc/whisperkit-coreml for Whisper, FluidInference for Parakeet) into ~/Library/Application Support/fabulous/models/.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

@@ -3,8 +3,9 @@ import Foundation
 
 /// A speech-to-text engine. Implementations are swappable:
 ///  - `WhisperKitBackend` (default): Whisper via CoreML on ANE/GPU.
-///  - Parakeet via FluidAudio (planned): fast on 8 GB M1 machines.
-///  - Apple `SpeechAnalyzer` (planned, macOS 26+): OS-managed assets.
+///  - `ParakeetBackend` via FluidAudio: TDT v3 batch decoding, EOU 120M
+///    streaming; fast on 8 GB M1 machines.
+///  - `SpeechAnalyzerBackend` (macOS 26+): OS-managed assets.
 public protocol TranscriptionBackend: Sendable {
     /// Downloads (if needed) and loads the model. Idempotent for the same
     /// descriptor. May take minutes on first run (download + CoreML
