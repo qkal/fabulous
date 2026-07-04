@@ -85,6 +85,10 @@ final class AppController {
     /// PipelineTests with fakes.
     private let screenReader: any ScreenContextReading = ScreenContextReader()
     private var screenContextTask: Task<ScreenContext, Never>?
+    /// Bumped whenever the current recording's AX walk is superseded or
+    /// cancelled, so a late completion hook from a stale walk can't bias
+    /// the next dictation's context.
+    private var screenContextGeneration = 0
 
     /// Recordings shorter than this are almost certainly an accidental tap.
     private let minimumUtteranceDuration: TimeInterval = 0.25
@@ -483,6 +487,7 @@ final class AppController {
     /// contextual strings mid-utterance, and the cleanup session re-warms
     /// with the final instructions — still overlapped with speech.
     private func startScreenContextCapture() {
+        screenContextGeneration += 1
         screenContextTask?.cancel()
         screenContextTask = nil
         guard ScreenContextPolicy.shouldCapture(
@@ -491,15 +496,16 @@ final class AppController {
             engineBiases: backend is any ContextBiasing
         ), let pid = recordingTargetPID else { return }
         let reader = screenReader
+        let generation = screenContextGeneration
         screenContextTask = Task { [weak self] in
             let context = await reader.read(pid: pid)
-            await self?.screenContextCaptured(context)
+            await self?.screenContextCaptured(context, generation: generation)
             return context
         }
     }
 
-    private func screenContextCaptured(_ context: ScreenContext) async {
-        guard state == .recording, !context.terms.isEmpty else { return }
+    private func screenContextCaptured(_ context: ScreenContext, generation: Int) async {
+        guard state == .recording, generation == screenContextGeneration, !context.terms.isEmpty else { return }
         // Privacy: counts only, never the text (spec invariant).
         NSLog("fabulous: screen ctx: \(context.terms.count) terms")
         // Streaming session may not exist yet (its start task races the
@@ -518,6 +524,7 @@ final class AppController {
         guard let task = screenContextTask else { return [] }
         screenContextTask = nil
         guard let context = await TaskTimeout.value(of: task, within: .milliseconds(100)) else {
+            screenContextGeneration += 1
             task.cancel()
             return []
         }
@@ -529,6 +536,7 @@ final class AppController {
         guard state == .recording else { return }
         hotkey.interceptEscape = false
         stopLevelUpdates()
+        screenContextGeneration += 1
         screenContextTask?.cancel()
         screenContextTask = nil
         if let session = await takeStreamingSession() { await session.cancel() }
@@ -582,6 +590,7 @@ final class AppController {
         let stoppedAt = clock.now
 
         guard audio.duration >= minimumUtteranceDuration else {
+            screenContextGeneration += 1
             screenContextTask?.cancel()
             screenContextTask = nil
             if let session { await session.cancel() }
