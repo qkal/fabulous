@@ -1,7 +1,7 @@
 # Per-App Injection Overrides
 
 **Date:** 2026-07-04
-**Status:** Approved design, pending implementation
+**Status:** Shipped 2026-07-04
 
 ## Motivation
 
@@ -85,10 +85,11 @@ New tab after Replacements, styled like the existing tabs (PaperTheme).
   bundle. A bundle with no bundle identifier is ignored. Picking an app
   that already has a row selects that row instead of duplicating. New
   rows default to **Paste** (the most common reason to override).
-- **−** button deletes the selected user row; disabled for built-in rows.
+- Each user row has a trash button; disabled on built-in rows. (Built as per-row buttons — the grouped Form has no row selection, so a selection-based − button was dropped.)
 - Changing any row's popup always writes a user entry, even if the chosen
   value equals the built-in's — one uniform rule, and the resulting user
   row is deletable.
+- Picking an app that already has a row is a no-op — the row is already on screen; no duplicate is created.
 - Footer caption, one line: an override picks the *first* strategy tried;
   fallback to the others still applies.
 

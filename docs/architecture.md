@@ -162,10 +162,10 @@ Status item + menu (AppKit); onboarding window (SwiftUI in an
 `NSHostingController`) with 1 Hz permission polling — Accessibility has no
 change notification API.
 
-**Settings window** (SwiftUI, three tabs): General (hotkey recorder, PTT vs
+**Settings window** (SwiftUI, five tabs): General (hotkey recorder, PTT vs
 toggle, microphone picker by Core Audio UID, launch-at-login via
 `SMAppService`), Models (catalog with download progress / use / delete,
-offline banner), History (toggle, recent list, clear). Views are
+offline banner), Replacements, Apps, History (toggle, recent list, clear). Views are
 presentation-only: state flows in via `@Observable` models
 (`SettingsStore`, `ModelListModel`, `ConnectivityMonitor`), effects flow out
 through a `SettingsActions` closure bundle into `AppController`.
