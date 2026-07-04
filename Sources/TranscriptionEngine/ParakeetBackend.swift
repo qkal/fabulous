@@ -44,7 +44,12 @@ public actor ParakeetBackend: StreamingTranscriptionBackend {
         guard model.id == ModelDescriptor.parakeetV3.id else {
             throw TranscriptionError.modelNotLoaded
         }
-        if manager != nil { return }
+        if manager != nil {
+            // Batch models are resident; retry the streaming set if its
+            // first load failed transiently (degraded batch-only state).
+            await loadStreamingModelsIfNeeded()
+            return
+        }
         // `AsrModels.load(from:)` discards the last path component of
         // `from:` and re-derives it from `version.repo.folderName`
         // internally (Task 1 finding) — `repoRoot` already ends in
@@ -59,9 +64,16 @@ public actor ParakeetBackend: StreamingTranscriptionBackend {
         try await loaded.loadModels(models)
         manager = loaded
 
-        // Load the streaming model set too; a failure here degrades to
-        // batch-only Parakeet (sessions just won't open) instead of failing
-        // the whole engine.
+        await loadStreamingModelsIfNeeded()
+    }
+
+    /// Loads the streaming (EOU 120M) model set if it isn't already resident.
+    /// A failure here degrades to batch-only Parakeet (sessions just won't
+    /// open) instead of failing the whole engine. Called both on a fresh
+    /// `load()` and on a repeated `load()` so a transient failure can be
+    /// retried without an engine switch.
+    private func loadStreamingModelsIfNeeded() async {
+        guard streamingManager == nil else { return }
         do {
             // Task 1 finding: `eouDebounceMs` is a plain `Int`, default
             // 1280, no compiled ceiling — 600_000 (10 min) is safely usable

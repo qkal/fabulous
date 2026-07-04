@@ -48,6 +48,8 @@ public enum ParakeetInstaller {
                 progress(0.7 + downloadProgress.fractionCompleted * 0.3)
             }
         )
-        progress(1.0)
+        // No progress(1.0) here: ModelManager.download owns the final
+        // signal and emits it only after its isInstalled guard passes —
+        // same division of labor as the Whisper path.
     }
 }

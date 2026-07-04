@@ -100,7 +100,9 @@ struct ParakeetBackendTests {
         say.arguments = ["-o", wav.path, "--data-format=LEF32@16000", text]
         try say.run()
         say.waitUntilExit()
-        #expect(say.terminationStatus == 0)
+        guard say.terminationStatus == 0 else {
+            throw CocoaError(.fileWriteUnknown)  // say failed; no WAV was written
+        }
 
         let file = try AVAudioFile(forReading: wav)
         let format = file.processingFormat
