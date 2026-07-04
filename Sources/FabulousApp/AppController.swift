@@ -171,13 +171,19 @@ final class AppController {
     // MARK: - Model lifecycle
 
     private var selectedModel: ModelDescriptor {
-        ModelCatalog.descriptor(withID: settings.selectedModelID) ?? ModelCatalog.recommended
+        ModelCatalog.whisperVariants.first { $0.id == settings.selectedModelID }
+            ?? ModelCatalog.recommended
     }
 
     private func ensureSelectedModelLoaded() async {
         switch settings.transcriptionEngine {
         case .whisper: await loadWhisper()
         case .appleSpeech: await loadAppleSpeech()
+        case .parakeet:
+            // ParakeetBackend lands in a later task (plan Task 8 replaces
+            // this bridge with loadParakeet()); fall back to Whisper so a
+            // mid-branch build stays dictation-capable.
+            await loadWhisper()
         }
     }
 
@@ -682,9 +688,7 @@ final class AppController {
 
     /// e.g. "Whisper Large v3 Turbo · p50 1.12 s · p90 1.48 s · 42 runs"
     static func statsSummary(_ stats: LatencyStats, engineID: String) -> String {
-        let name = ModelCatalog.descriptor(withID: engineID)?.displayName
-            ?? (engineID == ModelDescriptor.appleSpeech.id
-                ? ModelDescriptor.appleSpeech.displayName : engineID)
+        let name = ModelCatalog.descriptor(withID: engineID)?.displayName ?? engineID
         let p50 = String(format: "%.2f", stats.p50TotalMs / 1000)
         let p90 = String(format: "%.2f", stats.p90TotalMs / 1000)
         return "\(name) · p50 \(p50) s · p90 \(p90) s · \(stats.sampleCount) run\(stats.sampleCount == 1 ? "" : "s")"
