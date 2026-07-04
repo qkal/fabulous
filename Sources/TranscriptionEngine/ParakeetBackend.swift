@@ -29,8 +29,11 @@ import Foundation
 /// `actor`s — Sendable by the language, no `@retroactive @unchecked
 /// Sendable` workaround needed (Task 1 finding; unlike `WhisperKit`, which
 /// is a plain `class`).
-public actor ParakeetBackend: TranscriptionBackend {
+public actor ParakeetBackend: StreamingTranscriptionBackend {
     private var manager: AsrManager?
+    /// The streaming (EOU 120M) engine, loaded once alongside the batch
+    /// models and reset between utterances. One session at a time.
+    private var streamingManager: StreamingEouAsrManager?
     private let modelsDirectory: URL
 
     public init(modelsDirectory: URL = FabPaths.modelsDirectory) {
@@ -55,6 +58,30 @@ public actor ParakeetBackend: TranscriptionBackend {
         let loaded = AsrManager(config: .default)
         try await loaded.loadModels(models)
         manager = loaded
+
+        // Load the streaming model set too; a failure here degrades to
+        // batch-only Parakeet (sessions just won't open) instead of failing
+        // the whole engine.
+        do {
+            // Task 1 finding: `eouDebounceMs` is a plain `Int`, default
+            // 1280, no compiled ceiling — 600_000 (10 min) is safely usable
+            // and never fires mid-dictation; the hotkey ends utterances, not
+            // silence detection. `loadModels(from:)` (Task 1 finding) loads
+            // flat files directly from the given directory (no folderName
+            // re-derivation, unlike the v3 ASR path) — it must directly
+            // contain `streaming_encoder.mlmodelc`, `decoder.mlmodelc`,
+            // `joint_decision.mlmodelc`, `vocab.json`, which is exactly what
+            // `ParakeetLayout.repoRoot(eouFolderName, downloadBase:)` +
+            // `ParakeetInstaller`'s `DownloadUtils.downloadRepo` produce.
+            let streaming = StreamingEouAsrManager(chunkSize: .ms160, eouDebounceMs: 600_000)
+            try await streaming.loadModels(
+                from: ParakeetLayout.repoRoot(ParakeetLayout.eouFolderName, downloadBase: modelsDirectory)
+            )
+            streamingManager = streaming
+        } catch {
+            NSLog("fabulous: parakeet streaming models unavailable, batch-only (\(error))")
+            streamingManager = nil
+        }
     }
 
     public func transcribe(
@@ -99,7 +126,13 @@ public actor ParakeetBackend: TranscriptionBackend {
         )
     }
 
+    public func startStreamingSession() async throws -> any StreamingSession {
+        guard let streamingManager else { throw TranscriptionError.modelNotLoaded }
+        return await ParakeetStreamingSession(manager: streamingManager)
+    }
+
     public func unload() {
         manager = nil
+        streamingManager = nil
     }
 }
