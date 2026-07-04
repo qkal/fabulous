@@ -2,6 +2,7 @@ import FabCore
 import Foundation
 import HotkeyEngine
 import Observation
+import TextInjector
 
 /// User preferences, persisted to UserDefaults. Dumb storage: side effects
 /// of a change (restarting the hotkey monitor, switching models) are the
@@ -21,6 +22,7 @@ final class SettingsStore {
         static let appearance = "appearance"
         static let llmCleanupEnabled = "llmCleanupEnabled"
         static let llmVocabulary = "llmVocabulary"
+        static let appOverrideEntries = "appOverrideEntries"
     }
 
     @ObservationIgnored private let defaults: UserDefaults
@@ -30,6 +32,7 @@ final class SettingsStore {
     @ObservationIgnored var onThemeChanged: (() -> Void)?
     @ObservationIgnored var onAppearanceChanged: (() -> Void)?
     @ObservationIgnored var onLLMCleanupChanged: (() -> Void)?
+    @ObservationIgnored var onAppOverridesChanged: (() -> Void)?
 
     var hotkeySpec: HotkeySpec {
         didSet {
@@ -99,6 +102,18 @@ final class SettingsStore {
         }
     }
 
+    /// Per-app injection overrides, layered over the built-in terminal
+    /// defaults by the AppController — user wins on the same bundle ID.
+    var appOverrideEntries: [AppOverride] {
+        didSet {
+            guard appOverrideEntries != oldValue else { return }
+            if let data = try? JSONEncoder().encode(appOverrideEntries) {
+                defaults.set(data, forKey: Keys.appOverrideEntries)
+            }
+            onAppOverridesChanged?()
+        }
+    }
+
     /// LLM transcript cleanup (Apple Foundation Models). Off by default —
     /// it adds latency before injection.
     var llmCleanupEnabled: Bool {
@@ -142,6 +157,9 @@ final class SettingsStore {
             ?? .system
         replacementEntries = defaults.data(forKey: Keys.replacementEntries)
             .flatMap { try? JSONDecoder().decode([ReplacementDictionary.Entry].self, from: $0) }
+            ?? []
+        appOverrideEntries = defaults.data(forKey: Keys.appOverrideEntries)
+            .flatMap { try? JSONDecoder().decode([AppOverride].self, from: $0) }
             ?? []
         llmCleanupEnabled = defaults.bool(forKey: Keys.llmCleanupEnabled)
         llmVocabulary = defaults.stringArray(forKey: Keys.llmVocabulary) ?? []
