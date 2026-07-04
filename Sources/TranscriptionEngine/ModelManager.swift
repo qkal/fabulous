@@ -60,9 +60,16 @@ public actor ModelManager {
         self.downloadBase = downloadBase
     }
 
+    private func isParakeet(_ model: ModelDescriptor) -> Bool {
+        model.id == ModelDescriptor.parakeetV3.id
+    }
+
     /// A model counts as installed only when all CoreML components exist —
     /// a folder alone may be an interrupted download.
     public func isInstalled(_ model: ModelDescriptor) -> Bool {
+        if isParakeet(model) {
+            return ParakeetLayout.isInstalled(downloadBase: downloadBase)
+        }
         guard let folder = ModelLayout.installedFolder(for: model, downloadBase: downloadBase)
         else { return false }
         return ModelLayout.isComplete(folder)
@@ -81,6 +88,19 @@ public actor ModelManager {
         _ model: ModelDescriptor,
         progress: @escaping @Sendable (Double) -> Void
     ) async throws -> URL {
+        if isParakeet(model) {
+            try FabPaths.ensureDirectoryExists(downloadBase)
+            do {
+                try await ParakeetInstaller.download(to: downloadBase, progress: progress)
+            } catch {
+                throw Self.isOffline(error) ? ManagerError.offline : error
+            }
+            guard ParakeetLayout.isInstalled(downloadBase: downloadBase) else {
+                throw ManagerError.incompleteDownload(model.id)
+            }
+            progress(1.0)
+            return ParakeetLayout.repoRoot(ParakeetLayout.v3FolderName, downloadBase: downloadBase)
+        }
         try FabPaths.ensureDirectoryExists(downloadBase)
         let folder: URL
         do {
@@ -102,6 +122,13 @@ public actor ModelManager {
     }
 
     public func delete(_ model: ModelDescriptor) throws {
+        if isParakeet(model) {
+            guard ParakeetLayout.isInstalled(downloadBase: downloadBase) else {
+                throw ManagerError.notInstalled
+            }
+            try ParakeetLayout.delete(downloadBase: downloadBase)
+            return
+        }
         guard let folder = ModelLayout.installedFolder(for: model, downloadBase: downloadBase)
         else { throw ManagerError.notInstalled }
         try FileManager.default.removeItem(at: folder)
@@ -109,6 +136,9 @@ public actor ModelManager {
 
     /// On-disk size of an installed model, or nil.
     public func sizeOnDisk(_ model: ModelDescriptor) -> Int64? {
+        if isParakeet(model) {
+            return ParakeetLayout.sizeOnDisk(downloadBase: downloadBase)
+        }
         guard let folder = ModelLayout.installedFolder(for: model, downloadBase: downloadBase),
               let enumerator = FileManager.default.enumerator(
                   at: folder, includingPropertiesForKeys: [.fileSizeKey]

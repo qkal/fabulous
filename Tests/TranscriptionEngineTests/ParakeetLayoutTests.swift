@@ -48,4 +48,34 @@ struct ParakeetLayoutTests {
         try ParakeetLayout.delete(downloadBase: base)
         #expect(ParakeetLayout.isInstalled(downloadBase: base) == false)
     }
+
+    /// ModelManager treats the parakeet descriptor via ParakeetLayout, not
+    /// the Whisper suffix-match.
+    @Test func modelManagerRoutesParakeetDescriptor() async throws {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let manager = ModelManager(downloadBase: base)
+
+        #expect(await manager.isInstalled(.parakeetV3) == false)
+
+        for (folderName, components) in [
+            (ParakeetLayout.v3FolderName, ParakeetLayout.v3RequiredComponents),
+            (ParakeetLayout.eouFolderName, ParakeetLayout.eouRequiredComponents),
+        ] {
+            for file in components {
+                let url = ParakeetLayout.repoRoot(folderName, downloadBase: base)
+                    .appendingPathComponent(file)
+                try FileManager.default.createDirectory(
+                    at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try Data("x".utf8).write(to: url)
+            }
+        }
+        #expect(await manager.isInstalled(.parakeetV3) == true)
+        #expect(await manager.installedModels().contains(.parakeetV3))
+        let size = await manager.sizeOnDisk(.parakeetV3)
+        #expect((size ?? 0) > 0)
+        try await manager.delete(.parakeetV3)
+        #expect(await manager.isInstalled(.parakeetV3) == false)
+    }
 }
