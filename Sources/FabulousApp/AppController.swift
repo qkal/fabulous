@@ -4,6 +4,7 @@ import FabCore
 import HistoryStore
 import HotkeyEngine
 import PostProcessing
+import ScreenReader
 import SwiftUI
 import TextInjector
 import TranscriptionEngine
@@ -78,6 +79,12 @@ final class AppController {
     /// into the wrong window.
     private var recordingTargetPID: pid_t?
     private let clock = ContinuousClock()
+
+    /// Reads on-screen text at record start. Live AX in production; the
+    /// seam exists because everything downstream of it is tested through
+    /// PipelineTests with fakes.
+    private let screenReader: any ScreenContextReading = ScreenContextReader()
+    private var screenContextTask: Task<ScreenContext, Never>?
 
     /// Recordings shorter than this are almost certainly an accidental tap.
     private let minimumUtteranceDuration: TimeInterval = 0.25
@@ -421,9 +428,13 @@ final class AppController {
             if let llmProcessor {
                 Task {
                     await llmProcessor.setAppContext(name: recordingTargetAppName())
+                    // Last dictation's screen terms must not leak into this
+                    // one; the walk below re-populates them if it lands.
+                    await llmProcessor.setScreenTerms([])
                     await llmProcessor.prepare()
                 }
             }
+            startScreenContextCapture()
             hotkey.interceptEscape = true
             state = .recording
             overlay.showRecording()
@@ -467,11 +478,59 @@ final class AppController {
         }
     }
 
+    /// Kicks the AX walk so it overlaps the user speaking. On completion
+    /// the terms go to both consumers immediately: the live session gets
+    /// contextual strings mid-utterance, and the cleanup session re-warms
+    /// with the final instructions — still overlapped with speech.
+    private func startScreenContextCapture() {
+        screenContextTask?.cancel()
+        screenContextTask = nil
+        guard ScreenContextPolicy.shouldCapture(
+            enabled: settings.useScreenContext,
+            cleanupOn: settings.llmCleanupEnabled,
+            engineBiases: backend is any ContextBiasing
+        ), let pid = recordingTargetPID else { return }
+        let reader = screenReader
+        screenContextTask = Task { [weak self] in
+            let context = await reader.read(pid: pid)
+            await self?.screenContextCaptured(context)
+            return context
+        }
+    }
+
+    private func screenContextCaptured(_ context: ScreenContext) async {
+        guard state == .recording, !context.terms.isEmpty else { return }
+        // Privacy: counts only, never the text (spec invariant).
+        NSLog("fabulous: screen ctx: \(context.terms.count) terms")
+        // Streaming session may not exist yet (its start task races the
+        // walk); batch fallback + cleanup below still get the terms.
+        await streamingSession?.updateContext(context.terms)
+        if let llmProcessor {
+            await llmProcessor.setScreenTerms(context.terms)
+            await llmProcessor.prepare()
+        }
+    }
+
+    /// The walk is virtually always done by hotkey release; only
+    /// ultra-short dictations race it, and they proceed contextless
+    /// rather than wait (100 ms bound, spec).
+    private func collectScreenTerms() async -> [String] {
+        guard let task = screenContextTask else { return [] }
+        screenContextTask = nil
+        guard let context = await TaskTimeout.value(of: task, within: .milliseconds(100)) else {
+            task.cancel()
+            return []
+        }
+        return context.terms
+    }
+
     /// Esc during recording: discard everything, transcribe nothing.
     private func cancelRecording() async {
         guard state == .recording else { return }
         hotkey.interceptEscape = false
         stopLevelUpdates()
+        screenContextTask?.cancel()
+        screenContextTask = nil
         if let session = await takeStreamingSession() { await session.cancel() }
         var audio = await recorder.stop()
         audio.zero()
@@ -523,6 +582,8 @@ final class AppController {
         let stoppedAt = clock.now
 
         guard audio.duration >= minimumUtteranceDuration else {
+            screenContextTask?.cancel()
+            screenContextTask = nil
             if let session { await session.cancel() }
             state = .idle
             overlay.hide()
@@ -530,9 +591,13 @@ final class AppController {
         }
         state = .transcribing
         overlay.showTranscribing()
+        let screenTerms = await collectScreenTerms()
         do {
             let capturedAudio = audio
             let batchBackend = backend
+            if !screenTerms.isEmpty, let biasing = batchBackend as? any ContextBiasing {
+                await biasing.setContextualTerms(screenTerms)
+            }
             let (transcript, streamed) = try await StreamingDictation.finalTranscript(
                 session: session,
                 fallback: { [recorder] in
@@ -565,6 +630,7 @@ final class AppController {
             }
             if let llmProcessor {
                 await llmProcessor.setAppContext(name: recordingTargetAppName())
+                await llmProcessor.setScreenTerms(screenTerms)
                 let report = await llmProcessor.cleanup(rawText)
                 cleaned = report.text
                 llmOutcome = report.outcome

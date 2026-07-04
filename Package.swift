@@ -74,6 +74,7 @@ let package = Package(
                 "TextInjector",
                 "HistoryStore",
                 "PostProcessing",
+                "ScreenReader",
             ]
         ),
 
@@ -91,7 +92,10 @@ let package = Package(
         // contracts are exercised together outside the app itself.
         .testTarget(
             name: "PipelineTests",
-            dependencies: ["FabCore", "AudioCapture", "TranscriptionEngine", "TextInjector"]
+            dependencies: [
+                "FabCore", "AudioCapture", "TranscriptionEngine", "TextInjector",
+                "ScreenReader", "PostProcessing",
+            ]
         ),
     ]
 )
