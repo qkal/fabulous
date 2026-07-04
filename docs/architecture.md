@@ -153,7 +153,9 @@ flag, accessibility trust) → either a strategy chain or a refusal. Hard
 rules: **secure input active** (password fields) → refuse, never type;
 no Accessibility → refuse with guidance. Per-app overrides start the chain
 lower (terminals default to paste — AX insertion into terminal emulators is
-unreliable); the chain never promotes back upward.
+unreliable); users add their own in Settings → Apps, layered over the
+built-ins (user wins on the same bundle ID). The chain never promotes back
+upward.
 
 ### UI layer
 Status item + menu (AppKit); onboarding window (SwiftUI in an
