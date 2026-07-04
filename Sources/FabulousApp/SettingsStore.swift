@@ -109,6 +109,10 @@ final class SettingsStore {
             guard appOverrideEntries != oldValue else { return }
             if let data = try? JSONEncoder().encode(appOverrideEntries) {
                 defaults.set(data, forKey: Keys.appOverrideEntries)
+            } else {
+                // In-memory overrides still apply this session, but the
+                // disk copy is now stale — a relaunch reloads old entries.
+                NSLog("fabulous: failed to persist app overrides")
             }
             onAppOverridesChanged?()
         }
