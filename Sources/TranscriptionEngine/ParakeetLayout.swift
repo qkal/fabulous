@@ -79,14 +79,22 @@ public enum ParakeetLayout {
         return found ? total : nil
     }
 
-    /// Removes both repo directories (missing ones are fine). For the EOU
-    /// tree this only removes the `160ms` leaf, not sibling chunk-size
-    /// variants (we never install those).
+    /// Removes both repo directories (missing ones are fine).
     public static func delete(downloadBase: URL) throws {
         for folderName in [v3FolderName, eouFolderName] {
             let root = repoRoot(folderName, downloadBase: downloadBase)
             if FileManager.default.fileExists(atPath: root.path) {
                 try FileManager.default.removeItem(at: root)
+            }
+            // A folderName with a path separator (the EOU chunk-size tier)
+            // leaves its parent behind once the leaf is gone. Remove the
+            // parent only when empty — a sibling chunk-size variant, should
+            // one ever be installed, survives.
+            guard folderName.contains("/") else { continue }
+            let parent = root.deletingLastPathComponent()
+            if let contents = try? FileManager.default.contentsOfDirectory(atPath: parent.path),
+               contents.isEmpty {
+                try FileManager.default.removeItem(at: parent)
             }
         }
     }

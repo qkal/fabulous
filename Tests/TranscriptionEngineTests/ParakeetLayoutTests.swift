@@ -47,6 +47,10 @@ struct ParakeetLayoutTests {
 
         try ParakeetLayout.delete(downloadBase: base)
         #expect(ParakeetLayout.isInstalled(downloadBase: base) == false)
+        // The EOU leaf's now-empty parent ("parakeet-eou-streaming/") goes too.
+        let eouParent = ParakeetLayout.repoRoot(ParakeetLayout.eouFolderName, downloadBase: base)
+            .deletingLastPathComponent()
+        #expect(!FileManager.default.fileExists(atPath: eouParent.path))
     }
 
     /// ModelManager treats the parakeet descriptor via ParakeetLayout, not
