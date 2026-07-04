@@ -53,7 +53,16 @@ reverts to the built-in; deleting any other user row reverts to the
 default auto chain. Built-ins added in future fabulous releases surface
 automatically because they are never copied into user data.
 
-The merge helper is a small pure function in the app layer.
+The merge helper lives in the `TextInjector` target (a `StrategySelector`
+convenience, e.g. `StrategySelector(userOverrides:)` layering user entries
+over `defaultOverrides`) — NOT the app layer: `FabulousApp` is an
+executable target no test imports, and merge semantics must be unit
+tested.
+
+Reverting a built-in: built-in rows cannot be deleted, so the way to
+neutralize one (e.g. make iTerm2 try axInsert again) is to shadow it with
+an explicit `axInsert` override. That is why the popup offers all three
+strategies on every row.
 
 ## Settings UI — new "Apps" tab
 
@@ -69,11 +78,17 @@ New tab after Replacements, styled like the existing tabs (PaperTheme).
     enabled. Changing the popup creates a user entry shadowing the
     built-in.
   - **User rows**: full color, deletable.
-- **+** button → NSOpenPanel rooted at /Applications, filtered to `.app`;
-  bundle ID + display name read from the chosen bundle. Picking an app
+- Rows sorted by display name (built-ins and user rows interleaved).
+- **+** button → NSOpenPanel filtered to `.app`, initial directory
+  /Applications but free to browse anywhere (system apps live in
+  /System/Applications); bundle ID + display name read from the chosen
+  bundle. A bundle with no bundle identifier is ignored. Picking an app
   that already has a row selects that row instead of duplicating. New
   rows default to **Paste** (the most common reason to override).
 - **−** button deletes the selected user row; disabled for built-in rows.
+- Changing any row's popup always writes a user entry, even if the chosen
+  value equals the built-in's — one uniform rule, and the resulting user
+  row is deletable.
 - Footer caption, one line: an override picks the *first* strategy tried;
   fallback to the others still applies.
 
@@ -90,7 +105,7 @@ New tab after Replacements, styled like the existing tabs (PaperTheme).
 
 ## Testing
 
-All pure, no AppKit:
+All pure, no AppKit, in `Tests/TextInjectorTests`:
 
 - Merge semantics: user wins over built-in; removing a user entry
   resurfaces the built-in.
