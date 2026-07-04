@@ -1,7 +1,7 @@
 # Parakeet backend (FluidAudio)
 
 **Date:** 2026-07-04 (amended same day after codebase + FluidAudio doc verification)
-**Status:** approved design, not yet implemented
+**Status:** implemented 2026-07-04
 
 ## Goal
 
@@ -186,6 +186,46 @@ Rejected alternatives:
    taught location.
 3. Confirm the streaming manager's debounce can be set high enough to
    never auto-endpoint during dictation pauses.
+
+## As-built notes
+
+Implemented 2026-07-04; verified against real Task 1 findings and actual
+FluidAudio v0.15.4 checkout. Key overrides from provisional spec assumptions:
+
+- **Download API**: FluidAudio's `AsrModels.download(to:)` and
+  `DownloadUtils.downloadRepo()` both accept custom directories and work
+  with our models tree. No taught-location fallback needed; `ParakeetInstaller`
+  routes both repos directly.
+- **Folder name derivation**: FluidAudio's load/download methods internally
+  discard the last path component of the directory passed and re-derive it
+  from `Repo.folderName`. `ParakeetLayout.repoRoot` accounts for this: leaf
+  names are `parakeet-tdt-0.6b-v3` (v3, fluidaudio's own) and
+  `parakeet-eou-streaming/160ms` (EOU 160ms chunk variant), NOT the HF repo IDs.
+- **Streaming loader flexibility**: `StreamingEouAsrManager.loadModels(from:)`
+  loads flat files directly from a supplied directory (no folderName re-derivation,
+  unlike v3 batch), matching `ParakeetLayout.repoRoot(eouFolderName, downloadBase:)`.
+- **No @retroactive @unchecked Sendable needed**: both `AsrManager` and
+  `StreamingEouAsrManager` are Swift `actor`s, Sendable by the language
+  (unlike WhisperKit's plain `class`). Task 1 concern resolved; no workaround
+  added to Task 5/7.
+- **FluidAudio.Language bridging**: unqualified `Language` from `import enum
+  FluidAudio.Language` (scoped import); `FabCore.Language` qualified. The
+  `FluidAudio` namespace-shim struct shadows `FluidAudio.Language(...)` syntax;
+  workaround is the scoped enum import, documented in CLAUDE.md.
+- **Streaming decoder state**: `AsrManager.transcribe` requires an externalized
+  `decoderState: inout TdtDecoderState` (no zero-argument overload). Fresh
+  `TdtDecoderState()` per batch call is correct for stateless use; streaming
+  session manages its own state internally.
+- **EOU debounce**: configurable as a plain `Int`, default 1280 ms, no ceiling.
+  Set to `600_000` (10 minutes) to never auto-endpoint mid-dictation; hotkey
+  release ends utterances, not silence detection. EOU callback is unregistered.
+- **Model size on disk**: ~674 MB combined (460.7 MB v3 + 213.7 MB EOU 160ms),
+  measured via HuggingFace API file sizes; not yet confirmed against a
+  real downloaded install — re-measure via `ParakeetLayout.sizeOnDisk` if
+  materially different and update `ModelDescriptor.parakeetV3.approximateSizeMB`.
+- **Keep-warm active-engine-only**: loading Parakeet unloads Whisper and
+  Apple Speech; both model sets (v3 + EOU) stay resident. Three-engine
+  unload triangle honored.
 
 ## Out of scope
 
