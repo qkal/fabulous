@@ -481,23 +481,12 @@ private struct AppsSettingsPane: View {
         var id: String { bundleID }
     }
 
-    /// Display names for the built-ins; NSWorkspace can't name apps that
-    /// aren't installed, and bundle IDs are ugly.
-    private static let builtInNames: [String: String] = [
-        "com.apple.Terminal": "Terminal",
-        "com.googlecode.iterm2": "iTerm2",
-        "dev.warp.Warp-Stable": "Warp",
-        "com.github.wez.wezterm": "WezTerm",
-        "net.kovidgoyal.kitty": "kitty",
-        "org.alacritty": "Alacritty",
-    ]
-
     private var rows: [Row] {
         var byID: [String: Row] = [:]
         for (bundleID, strategy) in StrategySelector.defaultOverrides {
             byID[bundleID] = Row(
                 bundleID: bundleID,
-                displayName: Self.builtInNames[bundleID] ?? bundleID,
+                displayName: StrategySelector.builtInDisplayNames[bundleID] ?? bundleID,
                 strategy: strategy,
                 isUserEntry: false
             )
@@ -606,11 +595,21 @@ private struct AppsSettingsPane: View {
         }
     }
 
+    /// LaunchServices icon lookups can hit disk, and SwiftUI re-evaluates
+    /// body (all rows) on every store edit — cache per bundle ID.
+    @MainActor private static var iconCache: [String: NSImage] = [:]
+
+    @MainActor
     private func icon(for bundleID: String) -> NSImage {
-        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
-            return NSWorkspace.shared.icon(forFile: url.path)
-        }
-        return NSWorkspace.shared.icon(for: .applicationBundle)
+        if let cached = Self.iconCache[bundleID] { return cached }
+        let icon: NSImage =
+            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+                NSWorkspace.shared.icon(forFile: url.path)
+            } else {
+                NSWorkspace.shared.icon(for: .applicationBundle)
+            }
+        Self.iconCache[bundleID] = icon
+        return icon
     }
 
     private func addApp() {
@@ -630,9 +629,7 @@ private struct AppsSettingsPane: View {
 
         // Already listed (user row or built-in)? The row is on screen —
         // no duplicate is created.
-        guard !store.appOverrideEntries.contains(where: { $0.bundleID == bundleID }),
-              StrategySelector.defaultOverrides[bundleID] == nil
-        else { return }
+        guard !rows.contains(where: { $0.bundleID == bundleID }) else { return }
 
         let name = (bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String)
             ?? (bundle.object(forInfoDictionaryKey: "CFBundleName") as? String)

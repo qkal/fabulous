@@ -3,14 +3,12 @@ import Foundation
 /// A user-configured injection override for one app: which strategy the
 /// chain starts at while that app is frontmost. Persisted by the app
 /// layer; layered over `StrategySelector.defaultOverrides` (user wins).
-public struct AppOverride: Codable, Sendable, Equatable, Identifiable {
+public struct AppOverride: Codable, Sendable, Equatable {
     public var bundleID: String
     /// Persisted so the settings row still renders after the app is
     /// uninstalled — icons can fall back to a generic one, names can't.
     public var displayName: String
     public var strategy: InjectionStrategy
-
-    public var id: String { bundleID }
 
     public init(bundleID: String, displayName: String, strategy: InjectionStrategy) {
         self.bundleID = bundleID
