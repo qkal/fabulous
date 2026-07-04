@@ -23,6 +23,7 @@ final class SettingsStore {
         static let llmCleanupEnabled = "llmCleanupEnabled"
         static let llmVocabulary = "llmVocabulary"
         static let appOverrideEntries = "appOverrideEntries"
+        static let useScreenContext = "useScreenContext"
     }
 
     @ObservationIgnored private let defaults: UserDefaults
@@ -138,6 +139,14 @@ final class SettingsStore {
         }
     }
 
+    /// Read visible text from the dictation-target app at record start
+    /// and use it as vocabulary for ASR biasing + LLM cleanup. On-device
+    /// and per-dictation only; checked at each recording, so no change
+    /// callback is needed.
+    var useScreenContext: Bool {
+        didSet { defaults.set(useScreenContext, forKey: Keys.useScreenContext) }
+    }
+
     let historyCap = 500
 
     init(defaults: UserDefaults = .standard) {
@@ -167,5 +176,6 @@ final class SettingsStore {
             ?? []
         llmCleanupEnabled = defaults.bool(forKey: Keys.llmCleanupEnabled)
         llmVocabulary = defaults.stringArray(forKey: Keys.llmVocabulary) ?? []
+        useScreenContext = defaults.object(forKey: Keys.useScreenContext) as? Bool ?? true
     }
 }

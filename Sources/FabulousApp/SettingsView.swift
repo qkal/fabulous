@@ -221,6 +221,13 @@ private struct GeneralSettingsPane: View {
                 }
             }
 
+            Section("Screen awareness") {
+                Toggle("Use on-screen text to improve dictation", isOn: $store.useScreenContext)
+                Text("Reads the visible text of the app you dictate into, so names and jargon on screen transcribe correctly. Uses the existing Accessibility permission, stays on this Mac, and is never stored.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
             Section {
                 Toggle("Launch fabulous at login", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { _, newValue in
