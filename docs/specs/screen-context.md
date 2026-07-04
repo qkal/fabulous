@@ -50,8 +50,10 @@ context attaches whenever the walk finishes.
 New SwiftPM target `ScreenReader` (feature module, depends only on
 FabCore), plus pure additions to FabCore:
 
-- `FabCore.ScreenContext` — value type: `appName`, `windowTitle`,
-  `terms: [String]`, `capturedAt`.
+- `FabCore.ScreenContext` — value type: `windowTitle`,
+  `terms: [String]`, `capturedAt`. (No `appName`: it already flows
+  separately via `setAppContext`, and resolving it needs AppKit, which
+  the reader deliberately avoids.)
 - `FabCore.SalientTermExtractor` — pure function, raw harvested strings →
   salient terms. v1 heuristics (no dictionary lookup; NSSpellChecker is
   AppKit and FabCore stays AppKit-free): capitalized-mid-sentence words,
@@ -80,15 +82,25 @@ Touched existing code:
     `TranscriptionBackend.transcribe` and the Whisper/Parakeet backends
     are untouched. Terms are per-dictation: set before the transcribe
     call, cleared after.
-- `SpeechAnalyzerBackend` — batch path passes `analysisContext:` at
-  analyzer creation from the stored terms; streaming session applies
-  `setContext` when terms arrive. A context rejection (throw) is logged
-  and swallowed — never fails the session.
-- `FoundationModelPostProcessor` — user vocabulary is baked into the
-  processor at construction (`rebuildLLMProcessor`), but screen terms
-  are per-dictation, so the process call gains an
-  `extraVocabulary: [String]` parameter (default `[]`). Instructions
-  are already built per call, so the merge happens there: stored user
+- `SpeechAnalyzerBackend` — both paths apply terms via
+  `analyzer.setContext(_:)` after analyzer creation (the plain
+  `init(modules:options:)` has no `analysisContext:` parameter; only
+  the input-sequence convenience does). Batch terms are stored by
+  `setContextualTerms` and consumed by the next `transcribe`; the
+  streaming session applies `setContext` mid-session when terms arrive.
+  A context rejection (throw) is logged and swallowed — never fails the
+  session.
+- `ContextualTextPostProcessor` — gains
+  `setScreenTerms(_ terms: [String]) async` with a default no-op,
+  following the existing `setAppContext` per-dictation setter pattern.
+  A per-call `extraVocabulary` parameter was rejected: `prepare()`
+  prewarming reuses the warmed `LanguageModelSession` only on an EXACT
+  instructions match, so per-call vocabulary would silently defeat the
+  prewarm. Instead, when the AX walk lands mid-recording, AppController
+  calls `setScreenTerms` and then `prepare()` again — the re-warm with
+  final instructions still overlaps the user speaking.
+- `FoundationModelPostProcessor` — stores screen terms next to `appName`
+  and builds instructions from a merged list: constructor-baked user
   vocabulary first and never truncated, case-insensitive dedupe, screen
   terms contribute at most their 30-term cap.
 - `CleanupPromptBuilder` — **no signature change**; it keeps receiving
@@ -121,7 +133,10 @@ Consumption:
 - **Streaming (SpeechAnalyzer):** session starts immediately; when the
   walk task completes, AppController calls
   `StreamingSession.updateContext`, which attaches contextual strings
-  mid-session via `setContext`. Walk slower than the utterance → context simply never
+  mid-session via `setContext`. The same completion hook pushes the
+  terms into the cleanup processor (`setScreenTerms` + `prepare()`), so
+  the warmed session is rebuilt with the final instructions while the
+  user is still speaking. Walk slower than the utterance → context simply never
   attaches; no waiting, no latency.
 - **Batch ASR + LLM cleanup (finishRecording):** await the walk task
   with a short timeout (≈100 ms — it is virtually always done; only
@@ -174,9 +189,11 @@ llm-post-processing.md). The cap is the tuning knob.
   secure-field skip.
 - `CleanupPromptBuilder` regression: merged-vocab path produces the same
   prompt shape; empty context → byte-identical prompt to today.
-- `FoundationModelPostProcessor` merge: `extraVocabulary` lands after
-  user vocabulary, dedupes case-insensitively, default `[]` leaves
-  today's instructions unchanged.
+- `FoundationModelPostProcessor` merge: screen terms land after user
+  vocabulary, dedupe case-insensitively, empty terms leave today's
+  instructions unchanged; `prepare()` after `setScreenTerms` warms a
+  session that the subsequent `cleanup` actually reuses (exact
+  instructions match).
 - PipelineTests with a fake `ScreenContextReading`: terms flow capture →
   cleanup; toggle off → reader never called; no consumer (cleanup off +
   non-biasing engine) → reader never called; slow fake → batch path
