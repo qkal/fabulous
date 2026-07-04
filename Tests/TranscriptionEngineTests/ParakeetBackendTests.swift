@@ -44,7 +44,9 @@ struct ParakeetBackendTests {
         let backend = ParakeetBackend()
         try await backend.load(model: .parakeetV3)
         let transcript = try await backend.transcribe(audio, language: nil)
-        #expect(transcript.text.lowercased().contains("hello"))
+        let lowered = transcript.text.lowercased()
+        #expect(lowered.contains("hello"))
+        #expect(lowered.contains("test"))
     }
 
     @Test(.enabled(if: realASREnabled))
@@ -53,6 +55,12 @@ struct ParakeetBackendTests {
         let backend = ParakeetBackend()
         try await backend.load(model: .parakeetV3)
         let session = try await backend.startStreamingSession()
+
+        let partialCount = Task {
+            var count = 0
+            for await _ in session.partials { count += 1 }
+            return count
+        }
         // Feed in ~250 ms chunks like the app's feed timer does.
         let chunk = 4_000
         var start = 0
@@ -62,7 +70,10 @@ struct ParakeetBackendTests {
             start = end
         }
         let transcript = try await session.finish()
-        #expect(!transcript.text.isEmpty)
+        let lowered = transcript.text.lowercased()
+        #expect(lowered.contains("streaming"))
+        #expect(lowered.contains("three"))
+        #expect(await partialCount.value > 0)
     }
 
     /// Synthesizes speech with `say` and decodes it into a mono Float32
