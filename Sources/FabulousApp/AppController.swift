@@ -519,7 +519,11 @@ final class AppController {
 
     /// The walk is virtually always done by hotkey release; only
     /// ultra-short dictations race it, and they proceed contextless
-    /// rather than wait (100 ms bound, spec).
+    /// rather than wait (100 ms bound, spec). True worst case is soft:
+    /// TaskTimeout cancels the walk at the limit, but a blocking AX
+    /// fetch already in flight can't be interrupted — the drain waits
+    /// for it, bounded by the per-element messaging timeout (~0.1 s),
+    /// so a hung target app costs ≈0.2 s here, not the 6 s AX default.
     private func collectScreenTerms() async -> [String] {
         guard let task = screenContextTask else { return [] }
         screenContextTask = nil

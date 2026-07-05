@@ -12,8 +12,11 @@ public struct ScreenContextReader: ScreenContextReading {
     /// Whole-walk budget. Checked between nodes via `shouldContinue`.
     private static let walkBudget: Duration = .seconds(1)
     /// Per-element AX messaging timeout — a hung app costs ≤100 ms per
-    /// attribute fetch instead of the 6 s system default.
-    private static let messagingTimeout: Float = 0.1
+    /// attribute fetch instead of the 6 s system default. The timeout is
+    /// NOT inherited: it applies only to the element it was set on, so
+    /// `LiveAXNode` re-applies it to every element it wraps (window and
+    /// each child) — setting it is a cheap local call, no IPC.
+    static let messagingTimeout: Float = 0.1
 
     public init() {}
 
@@ -53,6 +56,14 @@ public struct ScreenContextReader: ScreenContextReading {
 /// stays internal to this module and never crosses an isolation boundary.
 struct LiveAXNode: TextHarvestNode {
     let element: AXUIElement
+
+    /// Messaging timeouts are per-element (not inherited from the app
+    /// handle), so every wrapped element gets the short timeout or its
+    /// attribute fetches would fall back to the 6 s system default.
+    init(element: AXUIElement) {
+        AXUIElementSetMessagingTimeout(element, ScreenContextReader.messagingTimeout)
+        self.element = element
+    }
 
     var subrole: String? { string(kAXSubroleAttribute) }
     var title: String? { string(kAXTitleAttribute) }
