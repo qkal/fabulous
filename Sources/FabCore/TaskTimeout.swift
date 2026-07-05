@@ -1,8 +1,11 @@
 import Foundation
 
 /// Bounded await on a task that must not delay its caller: nil on
-/// timeout. The task itself keeps running — cancelling it (or not) is
-/// the caller's decision.
+/// timeout. On timeout the task is cancelled; nil is returned once it
+/// winds down (bounded by the task's own cancellation responsiveness) —
+/// `withTaskGroup` implicitly awaits every child at scope exit, so without
+/// this the group's drain of `task.value` would block until the task
+/// completes on its own, defeating the timeout.
 public enum TaskTimeout {
     public static func value<T: Sendable>(
         of task: Task<T, Never>,
@@ -12,6 +15,7 @@ public enum TaskTimeout {
             group.addTask { await task.value }
             group.addTask {
                 try? await Task.sleep(for: limit)
+                task.cancel()   // bounded drain: the awaiting child returns as soon as the cancelled task finishes
                 return nil
             }
             let first = await group.next() ?? nil

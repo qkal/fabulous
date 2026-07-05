@@ -525,7 +525,6 @@ final class AppController {
         screenContextTask = nil
         guard let context = await TaskTimeout.value(of: task, within: .milliseconds(100)) else {
             screenContextGeneration += 1
-            task.cancel()
             return []
         }
         return context.terms
@@ -604,7 +603,7 @@ final class AppController {
         do {
             let capturedAudio = audio
             let batchBackend = backend
-            if !screenTerms.isEmpty, let biasing = batchBackend as? any ContextBiasing {
+            if let biasing = batchBackend as? any ContextBiasing {
                 await biasing.setContextualTerms(screenTerms)
             }
             let (transcript, streamed) = try await StreamingDictation.finalTranscript(

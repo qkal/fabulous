@@ -47,9 +47,12 @@ import Testing
             try? await Task.sleep(for: .seconds(5))
             return ScreenContext(windowTitle: nil, terms: ["late"], capturedAt: .distantPast)
         }
+        let clock = ContinuousClock()
+        let start = clock.now
         let context = await TaskTimeout.value(of: task, within: .milliseconds(20))
+        let elapsed = clock.now - start
         #expect(context == nil)   // AppController maps nil to [] and proceeds
-        task.cancel()
+        #expect(elapsed < .seconds(1))
     }
 
     @Test func policyGatesTheWalk() {

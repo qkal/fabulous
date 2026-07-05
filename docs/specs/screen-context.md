@@ -194,10 +194,18 @@ llm-post-processing.md). The cap is the tuning knob.
   instructions unchanged; `prepare()` after `setScreenTerms` warms a
   session that the subsequent `cleanup` actually reuses (exact
   instructions match).
-- PipelineTests with a fake `ScreenContextReading`: terms flow capture →
-  cleanup; toggle off → reader never called; no consumer (cleanup off +
-  non-biasing engine) → reader never called; slow fake → batch path
-  proceeds without context after timeout.
+- `ScreenContextPolicy` (ScreenReaderTests, pure): disabled never captures,
+  any consumer (cleanup or a biasing engine) triggers capture, no consumer
+  means no capture — this is what actually covers the toggle-off and
+  no-consumer cases; `AppController` itself wires the policy but, as an
+  executable target, can't be imported by tests, so the wiring is verified
+  by review reasoning rather than a test (this includes the
+  `screenContextGeneration` late-hook guard).
+- PipelineTests (`ScreenContextFlowTests`) with a fake `ScreenContextReading`:
+  terms flow capture → cleanup (`harvestedTermsReachTheCleanupPrompt`);
+  `TaskTimeout` bounds a slow reader and the caller proceeds contextless,
+  asserted with an elapsed-time bound
+  (`slowReaderTimesOutAndDictationProceedsContextless`).
 - Real AX walk: conditional `FAB_REAL_AX=1` test against a spawned
   known window (à la `FAB_REAL_ASR`); skipped otherwise.
 - SpeechAnalyzer contextual strings: extend the conditional
