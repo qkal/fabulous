@@ -1,7 +1,7 @@
 # Screen Context — On-Screen Vocabulary for Dictation
 
 **Date:** 2026-07-04
-**Status:** Approved design, not yet implemented
+**Status:** Implemented 2026-07-05
 
 ## Motivation
 

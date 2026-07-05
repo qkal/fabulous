@@ -39,6 +39,11 @@ SwiftPM targets, one directory each under `Sources/`:
   hub snapshot path shape lives here).
 - `TextInjector` — `StrategySelector` (pure, tested) picks
   axInsert → paste → keystrokes chain; `TextInjector` (@MainActor) executes.
+- `ScreenReader` — screen-context harvest: `ScreenContextReader` walks the
+  dictation-target window's AX tree (existing Accessibility grant, no
+  Screen Recording), `TextHarvester` bounded walk core (pure, tested),
+  `ScreenContextPolicy`. Terms feed SpeechAnalyzer contextual strings +
+  LLM cleanup vocabulary.
 - `HistoryStore` — GRDB/SQLite transcript history (`TranscriptEntry`),
   cap-pruned on insert; only module importing GRDB.
 - `PostProcessing` — LLM transcript cleanup: `FoundationModelPostProcessor`
@@ -134,6 +139,20 @@ and FluidAudio.
   utterance (modules are single-use). An engine load failure must revert
   `settings.transcriptionEngine` to `.whisper` AND explicitly reload Whisper
   — `onEngineChanged` no-ops outside `.idle`/`.failed`.
+- **SpeechAnalyzer biasing is `setContext`, not init**: plain
+  `SpeechAnalyzer(modules:options:)` takes no `analysisContext:`; call
+  `analyzer.setContext(AnalysisContext with .general contextualStrings)`
+  after creation — it also works MID-SESSION on a running analyzer
+  (that's how streaming gets screen terms without delaying start).
+  Screen text itself is memory-only: never persist/log it verbatim
+  (log term counts), and `TextHarvester` must keep skipping
+  `AXSecureTextField` subtrees.
+- **Async protocol witness vs default extension**: an actor method
+  satisfying an `async` protocol requirement MUST be spelled `async`
+  when the protocol also has a default-extension implementation —
+  otherwise the compiler silently binds the no-op default and the actor
+  method never runs (bit us on `setScreenTerms`; `ContextBiasing` has
+  no default so its sync actor witness is fine).
 - Real-engine tests are conditional: `FAB_REAL_ASR=1 swift test --filter
   SpeechAnalyzerBackendTests` runs the actual Apple Speech engine over
   `say`-synthesized audio; `SileroVADTests` auto-skip unless the VAD model
@@ -193,4 +212,8 @@ defaults (user wins, delete reverts), injector selector swapped live;
 Parakeet/FluidAudio backend (docs/specs/parakeet-backend.md): TDT 0.6b v3
 batch + EOU 120M streaming, third engine picker option, gated Models-tab
 management, shipped 2026-07-04, dogfood decision pending (stay-120M / hybrid
-/ batch-only).
+/ batch-only);
+screen context (docs/specs/screen-context.md): AX-harvested on-screen
+vocabulary at record start → SpeechAnalyzer contextual strings + LLM
+cleanup vocab; ScreenReader module; default-on toggle in General;
+Whisper/Parakeet get the cleanup half only.
