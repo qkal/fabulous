@@ -17,7 +17,8 @@ public actor SpeechAnalyzerBackend: StreamingTranscriptionBackend, ContextBiasin
     private var loadedLocale: Locale?
 
     /// On-screen vocabulary for the NEXT batch transcribe; single-shot.
-    private var contextualTerms: [String] = []
+    /// private(set): tests read it to prove existential dispatch lands here.
+    private(set) var contextualTerms: [String] = []
 
     private static let analyzerOptions = SpeechAnalyzer.Options(
         priority: .userInitiated,
@@ -145,7 +146,11 @@ public actor SpeechAnalyzerBackend: StreamingTranscriptionBackend, ContextBiasin
         SpeechTranscriber(locale: locale, preset: .transcription)
     }
 
-    public func setContextualTerms(_ terms: [String]) {
+    // Spelled `async` to match the ContextBiasing requirement exactly: a
+    // sync actor witness works while the protocol has no default extension,
+    // but would silently lose to one if it were ever added (see the
+    // setScreenTerms gotcha in CLAUDE.md).
+    public func setContextualTerms(_ terms: [String]) async {
         contextualTerms = terms
     }
 

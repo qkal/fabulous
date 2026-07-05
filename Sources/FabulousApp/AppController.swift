@@ -85,6 +85,9 @@ final class AppController {
     /// PipelineTests with fakes.
     private let screenReader: any ScreenContextReading = ScreenContextReader()
     private var screenContextTask: Task<ScreenContext, Never>?
+    /// Record-start cleanup prewarm; the walk-completion hook awaits it so
+    /// its setScreenTerms([]) reset can never wipe freshly captured terms.
+    private var llmPrewarmTask: Task<Void, Never>?
     /// Bumped whenever the current recording's AX walk is superseded or
     /// cancelled, so a late completion hook from a stale walk can't bias
     /// the next dictation's context.
@@ -430,7 +433,7 @@ final class AppController {
             // and its instructions prefix are ready when transcription ends.
             // Fire-and-forget — prewarm is opportunistic, never blocking.
             if let llmProcessor {
-                Task {
+                llmPrewarmTask = Task {
                     await llmProcessor.setAppContext(name: recordingTargetAppName())
                     // Last dictation's screen terms must not leak into this
                     // one; the walk below re-populates them if it lands.
@@ -511,6 +514,11 @@ final class AppController {
         // Streaming session may not exist yet (its start task races the
         // walk); batch fallback + cleanup below still get the terms.
         await streamingSession?.updateContext(context.terms)
+        // A very fast walk could otherwise interleave ahead of the prewarm's
+        // setScreenTerms([]) reset, which would wipe these terms and warm an
+        // empty session — order after the prewarm structurally.
+        await llmPrewarmTask?.value
+        guard generation == screenContextGeneration else { return }
         if let llmProcessor {
             await llmProcessor.setScreenTerms(context.terms)
             await llmProcessor.prepare()

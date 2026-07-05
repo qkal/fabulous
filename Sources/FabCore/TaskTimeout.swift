@@ -15,6 +15,9 @@ public enum TaskTimeout {
             group.addTask { await task.value }
             group.addTask {
                 try? await Task.sleep(for: limit)
+                // Only cancel if we fired the timeout, not if we were cancelled
+                // because the value task already won.
+                guard !Task.isCancelled else { return nil }
                 task.cancel()   // bounded drain: the awaiting child returns as soon as the cancelled task finishes
                 return nil
             }

@@ -105,6 +105,18 @@ import Testing
         #expect(!transcript.text.isEmpty)  // biasing must never break decode
     }
 
+    /// Ungated: touches no engine. Calls through `any ContextBiasing` — the
+    /// witness-table path AppController uses — so a future default extension
+    /// on the protocol can't silently shadow the actor's method (the
+    /// setScreenTerms gotcha, CLAUDE.md).
+    @Test func setContextualTermsDispatchesThroughExistential() async throws {
+        guard #available(macOS 26.0, *) else { return }
+        let backend = SpeechAnalyzerBackend()
+        let biasing: any ContextBiasing = backend
+        await biasing.setContextualTerms(["ZebraTerm"])
+        #expect(await backend.contextualTerms == ["ZebraTerm"])
+    }
+
     @Test(.enabled(if: ProcessInfo.processInfo.environment["FAB_REAL_ASR"] == "1"))
     func streamingSessionAcceptsMidSessionContext() async throws {
         guard #available(macOS 26.0, *) else { return }
