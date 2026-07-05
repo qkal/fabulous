@@ -45,6 +45,11 @@ let package = Package(
         // Strategy chain for inserting text into the frontmost app.
         .target(name: "TextInjector", dependencies: ["FabCore"]),
 
+        // Frontmost-window text harvesting via the Accessibility API —
+        // uses the Accessibility grant we already hold (no Screen
+        // Recording, no screenshots). Feeds ScreenContext to dictation.
+        .target(name: "ScreenReader", dependencies: ["FabCore"]),
+
         // Local transcript history (SQLite via GRDB), fully optional at runtime.
         .target(
             name: "HistoryStore",
@@ -69,6 +74,7 @@ let package = Package(
                 "TextInjector",
                 "HistoryStore",
                 "PostProcessing",
+                "ScreenReader",
             ]
         ),
 
@@ -79,13 +85,17 @@ let package = Package(
         .testTarget(name: "HistoryStoreTests", dependencies: ["HistoryStore"]),
         .testTarget(name: "TranscriptionEngineTests", dependencies: ["TranscriptionEngine"]),
         .testTarget(name: "PostProcessingTests", dependencies: ["PostProcessing"]),
+        .testTarget(name: "ScreenReaderTests", dependencies: ["ScreenReader", "FabCore"]),
 
         // Cross-module pipeline test: resample → trim → transcribe (fake)
         // → post-process → injection strategy. The only place the stage
         // contracts are exercised together outside the app itself.
         .testTarget(
             name: "PipelineTests",
-            dependencies: ["FabCore", "AudioCapture", "TranscriptionEngine", "TextInjector"]
+            dependencies: [
+                "FabCore", "AudioCapture", "TranscriptionEngine", "TextInjector",
+                "ScreenReader", "PostProcessing",
+            ]
         ),
     ]
 )

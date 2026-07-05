@@ -179,4 +179,51 @@ struct FoundationModelPostProcessorTests {
         let p = processor(.reply("x"))
         await p.prepare()
     }
+
+    // MARK: - Screen terms
+
+    @Test func mergedVocabularyKeepsUserFirstAndDedupes() {
+        let merged = FoundationModelPostProcessor.mergedVocabulary(
+            user: ["WhisperKit", "Kal"],
+            screen: ["whisperkit", "ParakeetTDT", "Kal", "GRDB"]
+        )
+        #expect(merged == ["WhisperKit", "Kal", "ParakeetTDT", "GRDB"])
+    }
+
+    @Test func screenTermsReachInstructions() async {
+        let requester = RecordingRequester()
+        let processor = FoundationModelPostProcessor(requester: requester, vocabulary: ["Kal"])
+        await processor.setScreenTerms(["ParakeetTDT"])
+        _ = await processor.cleanup("hello parakeet tdt")
+        let instructions = await requester.cleanedInstructions
+        #expect(instructions.count == 1)
+        #expect(instructions.allSatisfy { $0.contains("ParakeetTDT") })
+        #expect(instructions.allSatisfy { $0.contains("Kal") })
+    }
+
+    @Test func emptyScreenTermsLeaveInstructionsByteIdentical() async {
+        let requester = RecordingRequester()
+        let processor = FoundationModelPostProcessor(requester: requester, vocabulary: ["Kal"])
+        await processor.setScreenTerms([])
+        _ = await processor.cleanup("hello")
+        let instructions = await requester.cleanedInstructions
+        #expect(instructions ==
+            [CleanupPromptBuilder.instructions(vocabulary: ["Kal"], appName: nil)])
+    }
+
+    @Test func prepareAfterSetScreenTermsWarmsTheSessionCleanupUses() async {
+        // The prewarm contract: prepare() and cleanup() must assemble the
+        // SAME instructions when screen terms are set before both —
+        // otherwise the warmed session is silently wasted.
+        let requester = RecordingRequester()
+        let processor = FoundationModelPostProcessor(requester: requester, vocabulary: [])
+        await processor.setScreenTerms(["ZebraTerm"])
+        await processor.prepare()
+        _ = await processor.cleanup("text")
+        let prepared = await requester.preparedInstructions
+        let cleaned = await requester.cleanedInstructions
+        #expect(prepared == cleaned)
+        #expect(prepared.count == 1)
+        #expect(prepared.allSatisfy { $0.contains("ZebraTerm") })
+    }
 }

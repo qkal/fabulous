@@ -82,6 +82,75 @@ import Testing
         #expect(await partialCount.value > 0)
     }
 
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["FAB_REAL_ASR"] == "1"))
+    func batchTranscribeAcceptsContextualTerms() async throws {
+        guard #available(macOS 26.0, *) else { return }
+
+        let wav = FileManager.default.temporaryDirectory
+            .appendingPathComponent("fab-context-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: wav) }
+        let say = Process()
+        say.executableURL = URL(fileURLWithPath: "/usr/bin/say")
+        say.arguments = ["-o", wav.path, "--data-format=LEF32@16000", "hello world this is a dictation test"]
+        try say.run()
+        say.waitUntilExit()
+        #expect(say.terminationStatus == 0)
+
+        let audio = try Self.monoFloatBuffer(from: wav)
+
+        let backend = SpeechAnalyzerBackend()
+        try await backend.load(model: .appleSpeech)
+        await backend.setContextualTerms(["fabulous", "WhisperKit"])
+        let transcript = try await backend.transcribe(audio, language: nil, onProgress: nil)
+        #expect(!transcript.text.isEmpty)  // biasing must never break decode
+    }
+
+    /// Ungated: touches no engine. Calls through `any ContextBiasing` — the
+    /// witness-table path AppController uses — so a future default extension
+    /// on the protocol can't silently shadow the actor's method (the
+    /// setScreenTerms gotcha, CLAUDE.md).
+    @Test func setContextualTermsDispatchesThroughExistential() async throws {
+        guard #available(macOS 26.0, *) else { return }
+        let backend = SpeechAnalyzerBackend()
+        let biasing: any ContextBiasing = backend
+        await biasing.setContextualTerms(["ZebraTerm"])
+        #expect(await backend.contextualTerms == ["ZebraTerm"])
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["FAB_REAL_ASR"] == "1"))
+    func streamingSessionAcceptsMidSessionContext() async throws {
+        guard #available(macOS 26.0, *) else { return }
+
+        let wav = FileManager.default.temporaryDirectory
+            .appendingPathComponent("fab-context-stream-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: wav) }
+        let say = Process()
+        say.executableURL = URL(fileURLWithPath: "/usr/bin/say")
+        say.arguments = [
+            "-o", wav.path, "--data-format=LEF32@16000",
+            "hello world this is a streaming dictation test",
+        ]
+        try say.run()
+        say.waitUntilExit()
+        #expect(say.terminationStatus == 0)
+        let audio = try Self.monoFloatBuffer(from: wav)
+
+        let backend = SpeechAnalyzerBackend()
+        try await backend.load(model: .appleSpeech)
+        let session = try await backend.startStreamingSession()
+        await session.updateContext(["fabulous"])  // must not throw or kill session
+
+        let chunkSize = 4000  // 0.25 s at 16 kHz
+        var offset = 0
+        while offset < audio.samples.count {
+            let end = min(offset + chunkSize, audio.samples.count)
+            await session.feed(Array(audio.samples[offset..<end]))
+            offset = end
+        }
+        let transcript = try await session.finish()
+        #expect(!transcript.text.isEmpty)
+    }
+
     private static func monoFloatBuffer(from url: URL) throws -> FabCore.AudioBuffer {
         let file = try AVAudioFile(forReading: url)
         let format = file.processingFormat

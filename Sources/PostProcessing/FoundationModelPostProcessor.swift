@@ -24,10 +24,15 @@ public protocol ContextualTextPostProcessor: TextPostProcessor {
     /// Optional prewarm hook, called at record-start so model warm-up
     /// overlaps the user speaking.
     func prepare() async
+    /// Per-dictation on-screen vocabulary. The caller resets this every
+    /// dictation (stale terms must not leak across dictations). Default
+    /// no-op for processors without a vocabulary concept.
+    func setScreenTerms(_ terms: [String]) async
 }
 
 extension ContextualTextPostProcessor {
     public func prepare() async {}
+    public func setScreenTerms(_ terms: [String]) async {}
 }
 
 /// Seam over the language model so fallback behavior is testable
@@ -50,6 +55,7 @@ public actor FoundationModelPostProcessor: ContextualTextPostProcessor {
     private let vocabulary: [String]
     private let timeout: Duration
     private var appName: String?
+    private var screenTerms: [String] = []
 
     public init(
         requester: any LanguageModelRequesting,
@@ -65,12 +71,33 @@ public actor FoundationModelPostProcessor: ContextualTextPostProcessor {
         appName = name
     }
 
+    public func setScreenTerms(_ terms: [String]) async {
+        screenTerms = terms
+    }
+
+    /// User vocabulary first and never truncated; screen terms append,
+    /// case-insensitive dedupe. Screen terms arrive pre-capped
+    /// (SalientTermExtractor.defaultCap) — no second cap here.
+    public static func mergedVocabulary(user: [String], screen: [String]) -> [String] {
+        var seen = Set(user.map { $0.lowercased() })
+        var merged = user
+        for term in screen where seen.insert(term.lowercased()).inserted {
+            merged.append(term)
+        }
+        return merged
+    }
+
+    private func currentInstructions() -> String {
+        CleanupPromptBuilder.instructions(
+            vocabulary: Self.mergedVocabulary(user: vocabulary, screen: screenTerms),
+            appName: appName
+        )
+    }
+
     public func prepare() async {
         // Must assemble the instructions EXACTLY as cleanup() does — the
         // requester only uses the warmed session on an exact match.
-        let instructions = CleanupPromptBuilder.instructions(
-            vocabulary: vocabulary, appName: appName
-        )
+        let instructions = currentInstructions()
         await requester.prepare(instructions: instructions)
     }
 
@@ -84,9 +111,7 @@ public actor FoundationModelPostProcessor: ContextualTextPostProcessor {
         guard !text.isEmpty else {
             return CleanupReport(text: text, outcome: .off)
         }
-        let instructions = CleanupPromptBuilder.instructions(
-            vocabulary: vocabulary, appName: appName
-        )
+        let instructions = currentInstructions()
         do {
             let cleaned = try await Self.withTimeout(timeout) { [requester] in
                 try await requester.cleanup(instructions: instructions, transcript: text)
