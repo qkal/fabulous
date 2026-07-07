@@ -694,12 +694,23 @@ final class AppController {
                 llmOutcome = report.outcome
             }
             let llmDoneAt = clock.now
+            // An LLM scratch-that (or an already-empty utterance) leaves `cleaned`
+            // empty. There's nothing to process or salvage, and a throw below
+            // would otherwise reach `safetyNet("")`, which destructively clears
+            // the user's clipboard for no text. Drop it here — same outcome as
+            // the empty-final-text `.dropSilently` decision below.
+            guard !cleaned.isEmpty else {
+                state = .idle
+                overlay.hide()
+                return
+            }
             let text: String
             do {
                 text = try await postProcessor.process(cleaned)
             } catch {
-                // Deterministic post-processing failed after we had a transcript —
-                // never drop it; safety-net the pre-processing text.
+                // Deterministic post-processing failed on a non-empty transcript —
+                // never drop it; safety-net the pre-processing text (guaranteed
+                // non-empty by the guard above).
                 safetyNet(cleaned, notice: "Couldn't process — transcript copied to clipboard")
                 state = .idle
                 return
