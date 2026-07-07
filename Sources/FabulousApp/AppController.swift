@@ -656,9 +656,25 @@ final class AppController {
                 llmOutcome = report.outcome
             }
             let llmDoneAt = clock.now
-            let text = try await postProcessor.process(cleaned)
+            let text: String
+            do {
+                text = try await postProcessor.process(cleaned)
+            } catch {
+                // Deterministic post-processing failed after we had a transcript —
+                // never drop it; safety-net the pre-processing text.
+                safetyNet(cleaned, notice: "Couldn't process — transcript copied to clipboard")
+                state = .idle
+                return
+            }
             let processedAt = clock.now
-            guard !text.isEmpty else {
+            switch TerminalDeliveryDecision.decide(finalText: text, cleanedText: cleaned) {
+            case .inject:
+                break  // fall through to normal delivery below
+            case .safetyNet(let salvage):
+                safetyNet(salvage, notice: "Transcript copied to clipboard")
+                state = .idle
+                return
+            case .dropSilently:
                 state = .idle
                 overlay.hide()
                 return
