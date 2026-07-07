@@ -619,8 +619,8 @@ final class AppController {
         // when session == nil the buffer is already VAD-trimmed and a second
         // pass would recharge latency and re-shave padding (Whisper would hear
         // different audio than the pre-branch behaviour).
-        let audioIsRaw = session != nil
-        var audio = await recorder.stop(trimming: session == nil)
+        let audioIsRaw = StreamStopPolicy.needsLazyTrim(hasSession: session != nil)
+        var audio = await recorder.stop(trimming: StreamStopPolicy.trimAtStop(hasSession: session != nil))
         defer { audio.zero() }
         let stoppedAt = clock.now
 
