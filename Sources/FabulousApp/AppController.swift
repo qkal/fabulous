@@ -287,7 +287,7 @@ final class AppController {
     /// Downloads with progress reflected in the Models tab, and optionally
     /// in the menu bar (used for the automatic first-launch download).
     private func downloadModel(_ model: ModelDescriptor, drivesAppState: Bool) async throws {
-        modelList.update(model.id, to: .downloading(0))
+        modelList.apply(.downloadStarted, to: model.id)
         if drivesAppState { state = .loadingModel(0) }
         do {
             try await modelManager.download(model) { [weak self] fraction in
@@ -296,9 +296,13 @@ final class AppController {
                 }
             }
         } catch {
-            modelList.update(model.id, to: .failed(shortErrorText(error)))
+            modelList.apply(.downloadFailed(shortErrorText(error)), to: model.id)
             throw error
         }
+        // The fix: the success transition is explicit, not a refresh that skips
+        // `.downloading` rows. A late progress(1.0) tick is now harmless — the
+        // reducer ignores `.progress` on a non-downloading row.
+        modelList.apply(.downloadSucceeded(isActive: model.id == activeModelID), to: model.id)
     }
 
     private var lastReportedFraction: Double = 0
@@ -308,25 +312,21 @@ final class AppController {
         // visible change.
         guard fraction >= 1 || fraction - lastReportedFraction > 0.01 else { return }
         lastReportedFraction = fraction >= 1 ? 0 : fraction
-        modelList.update(model.id, to: .downloading(fraction))
+        modelList.apply(.progress(fraction), to: model.id)
         if drivesAppState { state = .loadingModel(fraction) }
     }
 
     private func refreshModelList() async {
         for descriptor in ModelCatalog.all {
-            if case .downloading = modelList.items.first(where: { $0.id == descriptor.id })?.status {
-                continue // don't clobber an in-flight download row
-            }
-            if await modelManager.isInstalled(descriptor) {
+            let installed = await modelManager.isInstalled(descriptor)
+            let isActive = descriptor.id == activeModelID
+            // reconcile leaves in-flight `.downloading` and `.failed` rows alone.
+            modelList.apply(.reconcile(installed: installed, isActive: isActive), to: descriptor.id)
+            if installed {
                 let bytes = await modelManager.sizeOnDisk(descriptor)
-                let megabytes = bytes.map { Int($0 / 1_048_576) }
-                modelList.update(
-                    descriptor.id,
-                    to: descriptor.id == activeModelID ? .active : .installed,
-                    sizeOnDiskMB: .some(megabytes)
-                )
+                modelList.updateSize(descriptor.id, sizeOnDiskMB: bytes.map { Int($0 / 1_048_576) })
             } else {
-                modelList.update(descriptor.id, to: .notInstalled, sizeOnDiskMB: .some(nil))
+                modelList.updateSize(descriptor.id, sizeOnDiskMB: nil)
             }
         }
     }
