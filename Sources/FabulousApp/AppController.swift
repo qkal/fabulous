@@ -141,7 +141,9 @@ final class AppController {
         settings.onAppOverridesChanged = { [weak self] in self?.applyInjectionOverrides() }
         settings.onLLMCleanupChanged = { [weak self] in self?.rebuildLLMProcessor() }
         settings.onEngineChanged = { [weak self] in
-            guard let self, state == .idle || isFailed(state) else { return }
+            guard let self,
+                  EngineLoadDecision.shouldApply(isIdle: state == .idle, isFailed: isFailed(state))
+            else { return }
             Task { await self.ensureSelectedModelLoaded() }
         }
         settings.onThemeChanged = { [weak self] in
