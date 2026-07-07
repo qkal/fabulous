@@ -93,6 +93,9 @@ final class AppController {
     /// the next dictation's context.
     private var screenContextGeneration = 0
 
+    /// Push-to-talk / toggle lifecycle; decides start/goLive/finish from key events.
+    private var recordingGate = RecordingGate()
+
     /// Recordings shorter than this are almost certainly an accidental tap.
     private let minimumUtteranceDuration: TimeInterval = 0.25
 
@@ -405,50 +408,67 @@ final class AppController {
 
     // MARK: - Push-to-talk state machine
 
-    private func hotkeyPressed() {
-        switch (settings.hotkeySpec.mode, state) {
-        case (.pushToTalk, .idle), (.toggle, .idle):
-            Task { await beginRecording() }
-        case (.toggle, .recording):
-            Task { await finishRecording() }
-        default:
+    private var gateMode: RecordingGate.Mode {
+        settings.hotkeySpec.mode == .toggle ? .toggle : .pushToTalk
+    }
+
+    private func perform(_ action: RecordingGate.Action) {
+        switch action {
+        case .none:
             break
+        case .beginStart:
+            Task { await beginRecording() }
+        case .goLive:
+            goLive()
+        case .finish:
+            Task { await finishRecording() }
+        case .abortToIdle:
+            state = .idle
+            overlay.hide()
         }
     }
 
+    /// The "we are now recording" setup, run when the gate says `.goLive`.
+    private func goLive() {
+        if let llmProcessor {
+            llmPrewarmTask = Task {
+                await llmProcessor.setAppContext(name: recordingTargetAppName())
+                await llmProcessor.setScreenTerms([])
+                await llmProcessor.prepare()
+            }
+        }
+        startScreenContextCapture()
+        hotkey.interceptEscape = true
+        state = .recording
+        overlay.showRecording()
+        startLevelUpdates()
+        startStreamingSessionIfAvailable()
+        if settings.soundCuesEnabled { SoundCues.recordingStarted() }
+    }
+
+    private func hotkeyPressed() {
+        perform(recordingGate.handle(.press, mode: gateMode))
+    }
+
     private func hotkeyReleased() {
-        guard settings.hotkeySpec.mode == .pushToTalk, state == .recording else { return }
-        Task { await finishRecording() }
+        guard settings.hotkeySpec.mode == .pushToTalk else { return }
+        perform(recordingGate.handle(.release, mode: .pushToTalk))
     }
 
     private func beginRecording() async {
         guard Permissions.microphoneGranted else {
+            perform(recordingGate.handle(.startFailed, mode: gateMode))
             showOnboarding()
             return
         }
         do {
             try await recorder.start(deviceUID: settings.inputDeviceUID)
             recordingTargetPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
-            // Warm the cleanup session while the user speaks: the session
-            // and its instructions prefix are ready when transcription ends.
-            // Fire-and-forget — prewarm is opportunistic, never blocking.
-            if let llmProcessor {
-                llmPrewarmTask = Task {
-                    await llmProcessor.setAppContext(name: recordingTargetAppName())
-                    // Last dictation's screen terms must not leak into this
-                    // one; the walk below re-populates them if it lands.
-                    await llmProcessor.setScreenTerms([])
-                    await llmProcessor.prepare()
-                }
-            }
-            startScreenContextCapture()
-            hotkey.interceptEscape = true
-            state = .recording
-            overlay.showRecording()
-            startLevelUpdates()
-            startStreamingSessionIfAvailable()
-            if settings.soundCuesEnabled { SoundCues.recordingStarted() }
+            // The gate decides whether we go live or (if a release/toggle-off
+            // arrived during start) finish immediately — closing the fast-tap race.
+            perform(recordingGate.handle(.startSucceeded, mode: gateMode))
         } catch {
+            perform(recordingGate.handle(.startFailed, mode: gateMode))
             await flashFailure("Couldn't start recording: \(error)")
         }
     }
@@ -556,6 +576,7 @@ final class AppController {
         state = .idle
         overlay.hide()
         if settings.soundCuesEnabled { SoundCues.recordingCancelled() }
+        _ = recordingGate.handle(.finished, mode: gateMode)
     }
 
     /// Stops the feed/partials machinery. Runs before any overlay
@@ -575,6 +596,7 @@ final class AppController {
     }
 
     private func finishRecording() async {
+        defer { _ = recordingGate.handle(.finished, mode: gateMode) }
         let releasedAt = clock.now
         hotkey.interceptEscape = false
         stopLevelUpdates()
