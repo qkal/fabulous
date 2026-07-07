@@ -455,6 +455,14 @@ final class AppController {
     }
 
     private func hotkeyPressed() {
+        // The gate tracks only its own recording phase, not app readiness, so
+        // it can't tell `.loadingModel`/`.transcribing`/`.needsPermissions`/
+        // `.failed` apart from `.idle`. Gate app state here (restoring the
+        // pre-RecordingGate `state == .idle` guard) so a press mid-download or
+        // mid-transcription can't `goLive` and clobber that state. `.recording`
+        // must pass through for toggle-mode finish; a toggle-off *during start*
+        // arrives while state is still `.idle`, so it's covered too.
+        guard state == .idle || state == .recording else { return }
         perform(recordingGate.handle(.press, mode: gateMode))
     }
 
