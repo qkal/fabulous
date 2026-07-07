@@ -3,17 +3,12 @@ import Foundation
 import Observation
 
 /// UI state for the Models settings tab. Owned and mutated by AppController;
-/// the view only reads it and calls actions.
+/// the view only reads it and calls actions. Status transitions are delegated
+/// to `FabCore.ModelRowState` so they are unit-tested.
 @MainActor
 @Observable
 final class ModelListModel {
-    enum Status: Equatable {
-        case notInstalled
-        case downloading(Double)
-        case installed
-        case active
-        case failed(String)
-    }
+    typealias Status = ModelRowStatus
 
     struct Item: Identifiable {
         let descriptor: ModelDescriptor
@@ -28,11 +23,14 @@ final class ModelListModel {
         Item(descriptor: $0, status: .notInstalled, sizeOnDiskMB: nil)
     }
 
-    func update(_ modelID: String, to status: Status, sizeOnDiskMB: Int?? = nil) {
+    /// Drives one row's status through the pure reducer.
+    func apply(_ event: ModelRowEvent, to modelID: String) {
         guard let index = items.firstIndex(where: { $0.id == modelID }) else { return }
-        items[index].status = status
-        if let sizeOnDiskMB {
-            items[index].sizeOnDiskMB = sizeOnDiskMB
-        }
+        items[index].status = ModelRowState.reduce(items[index].status, event)
+    }
+
+    func updateSize(_ modelID: String, sizeOnDiskMB: Int?) {
+        guard let index = items.firstIndex(where: { $0.id == modelID }) else { return }
+        items[index].sizeOnDiskMB = sizeOnDiskMB
     }
 }

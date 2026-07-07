@@ -40,6 +40,26 @@ public actor ParakeetBackend: StreamingTranscriptionBackend {
         self.modelsDirectory = modelsDirectory
     }
 
+    /// FluidAudio's batch decoder throws `invalidAudioData` on very short
+    /// clips. The streaming→batch fallback can hand it a silence-trimmed buffer
+    /// well under this; treat those as an empty utterance rather than a throw.
+    ///
+    /// NOTE (empirical, Task 6 repro): FluidAudio's real floor is a hard,
+    /// exact-sample-count cliff, not a fuzzy acoustic threshold — a real
+    /// `AsrManager.transcribe` repro against 16 kHz `say`-synthesized speech
+    /// (3 phrases, sample counts swept in both coarse and 1-sample-fine
+    /// steps) throws `invalidAudioData` at exactly 4799 samples (0.2999... s)
+    /// and succeeds at exactly 4800 samples (0.300 s) on every trial,
+    /// consistently — almost certainly an internal frame/window size
+    /// requirement (4800 samples @ 16 kHz = 300 ms). The brief's original
+    /// 0.16 s default sat well inside the throwing region and was raised to
+    /// 0.30 s, the measured cliff, after this run.
+    static let batchMinimumDuration: TimeInterval = 0.30
+
+    static func isBelowBatchMinimum(_ audio: FabCore.AudioBuffer) -> Bool {
+        audio.duration < batchMinimumDuration
+    }
+
     public func load(model: ModelDescriptor) async throws {
         guard model.id == ModelDescriptor.parakeetV3.id else {
             throw TranscriptionError.modelNotLoaded
@@ -107,6 +127,9 @@ public actor ParakeetBackend: StreamingTranscriptionBackend {
         }
         guard !audio.isEmpty else {
             return Transcript(text: "", audioDuration: 0)
+        }
+        guard !Self.isBelowBatchMinimum(audio) else {
+            return Transcript(text: "", audioDuration: audio.duration)
         }
         // No progress polling: v3 decodes at ~190× real time, so even a
         // minute of audio finishes inside one progress-UI repaint.
