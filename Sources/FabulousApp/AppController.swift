@@ -97,6 +97,12 @@ final class AppController {
     private var recordingGate = RecordingGate()
 
     /// Recordings shorter than this are almost certainly an accidental tap.
+    /// Deliberately BELOW Parakeet's batch-decoder floor
+    /// (`ParakeetBackend.batchMinimumDuration`, 0.30 s): a raw utterance that
+    /// passes this guard but VAD-trims into the 0.25–0.30 s band returns empty
+    /// on Parakeet (never a thrown `invalidAudioData`) where Whisper would still
+    /// decode a word. Don't raise this toward 0.30 to "align" them — that only
+    /// widens the Whisper drop zone; the two floors are intentionally separate.
     private let minimumUtteranceDuration: TimeInterval = 0.25
 
     /// Glass is always dark — its fixed graphite surfaces need dark-mode
