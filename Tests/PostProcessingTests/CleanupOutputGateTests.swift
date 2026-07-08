@@ -101,6 +101,12 @@ struct CleanupOutputGateTests {
                     "HistoryStore", "overlay", "settings"]))
     }
 
+    @Test func repetitionFloodRejected() {
+        // Degenerate decoding pathology: output loops a raw word. Zero
+        // never-seen tokens, but excess occurrences are invented content.
+        #expect(!permits("ship it today", "ship ship ship ship ship ship ship"))
+    }
+
     @Test func tinyUtteranceCasingPasses() {
         // "hi" -> "Hi." must not trip a bare length ratio — absolute slack.
         #expect(permits("hi", "Hi."))

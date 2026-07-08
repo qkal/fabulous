@@ -6,9 +6,10 @@ import Foundation
 /// Rationale: legitimate cleanup only *removes* words (fillers, scratch-
 /// that), fixes punctuation/casing, and substitutes few words (homophones,
 /// vocabulary spellings). Hallucination *invents* words. So: tokenize both
-/// texts, count cleaned tokens that never appear in the raw transcript, and
-/// reject when too much of the output is novel — or when the output grew
-/// beyond what "never add content" allows.
+/// texts, count cleaned tokens without a matching raw occurrence left to
+/// consume (frequency-aware — a repetition flood of one raw word is still
+/// invented content), and reject when too much of the output is novel — or
+/// when the output grew beyond what "never add content" allows.
 ///
 /// Tokenization is whitespace-based; non-spaced scripts (CJK) degrade to
 /// always-reject, which is safe (cleanup no-ops, raw text is delivered) and
@@ -28,12 +29,18 @@ public enum CleanupOutputGate {
         // utterances ("hi" -> "Hi.") from tripping a bare ratio.
         if cleanedTokens.count > rawTokens.count * 3 / 2 + 3 { return false }
 
-        let rawSet = Set(rawTokens)
+        // Multiset, not set: each cleaned token consumes one raw occurrence.
+        // A cleaned token whose raw count is exhausted (or never present) is
+        // novel — catches repetition floods that reuse a single raw word.
+        var rawCounts: [String: Int] = [:]
+        for token in rawTokens { rawCounts[token, default: 0] += 1 }
         let vocabSet = Set(vocabulary.flatMap { tokens($0) })
         var novel = 0
         var vocabNovel = 0
-        for token in cleanedTokens where !rawSet.contains(token) {
-            if vocabSet.contains(token) {
+        for token in cleanedTokens {
+            if let remaining = rawCounts[token], remaining > 0 {
+                rawCounts[token] = remaining - 1
+            } else if vocabSet.contains(token) {
                 vocabNovel += 1
             } else {
                 novel += 1
