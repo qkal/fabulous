@@ -14,6 +14,9 @@ final class TapProcessor: @unchecked Sendable {
     /// Index of the first sample not yet returned by `drainNew()`.
     private var newCursor = 0
     private var latestRMS: Float = 0
+    /// Monotonic timestamp of the last `process(_:)` call; `level` decays to
+    /// zero once this is stale, so a dead tap doesn't show a frozen meter.
+    private var lastProcessedAt: DispatchTime?
 
     // Tap-thread-only state (no lock needed).
     private var resampler: AudioResampler?
@@ -51,6 +54,7 @@ final class TapProcessor: @unchecked Sendable {
         lock.lock()
         samples.append(contentsOf: converted)
         latestRMS = rms
+        lastProcessedAt = DispatchTime.now()
         lock.unlock()
     }
 
@@ -76,10 +80,24 @@ final class TapProcessor: @unchecked Sendable {
         return fresh
     }
 
-    /// RMS level of the most recent buffer, for the future level meter UI.
+    /// RMS level of the most recent buffer, for the level meter UI. Decays
+    /// to zero once no buffer has arrived for >150 ms, so a dead tap shows
+    /// a falling meter instead of a frozen non-zero one.
     var level: Float {
         lock.lock()
         defer { lock.unlock() }
+        guard let last = lastProcessedAt else { return 0 }
+        let elapsed = DispatchTime.now().uptimeNanoseconds &- last.uptimeNanoseconds
+        if elapsed > 150 * 1_000_000 { return 0 }
         return latestRMS
+    }
+
+    /// Test seam: sets the decay state deterministically without a live tap.
+    func setLastProcessedForTest(monotonicSecondsAgo seconds: Double, rms: Float) {
+        lock.lock()
+        defer { lock.unlock() }
+        let ns = UInt64(seconds * 1_000_000_000)
+        lastProcessedAt = DispatchTime(uptimeNanoseconds: DispatchTime.now().uptimeNanoseconds &- ns)
+        latestRMS = rms
     }
 }

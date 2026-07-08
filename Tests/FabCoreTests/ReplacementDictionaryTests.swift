@@ -63,3 +63,24 @@ struct ReplacementDictionaryTests {
         #expect(try await pipeline.process("a") == "c")
     }
 }
+
+@Suite("ReplacementDictionary caching")
+struct ReplacementDictionaryCachingTests {
+    @Test func cachedResultMatchesNaive() {
+        let dict = ReplacementDictionary(entries: [
+            .init(pattern: "whisper kit", replacement: "WhisperKit"),
+            .init(pattern: "c++", replacement: "C++", caseSensitive: true),
+        ])
+        #expect(dict.apply(to: "i love whisper kit and c++") == "i love WhisperKit and C++")
+    }
+
+    @Test func mutatingEntriesAfterInitRebuildsCompiledRules() {
+        var dict = ReplacementDictionary(entries: [
+            .init(pattern: "anthropite", replacement: "Anthropite")
+        ])
+        dict.entries = [.init(pattern: "parakeet", replacement: "Parakeet")]
+        #expect(dict.apply(to: "the parakeet sings") == "the Parakeet sings")
+        // Old rule no longer applies once entries are replaced wholesale.
+        #expect(dict.apply(to: "anthropite here") == "anthropite here")
+    }
+}

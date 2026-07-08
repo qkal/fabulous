@@ -29,9 +29,17 @@ public actor WhisperKitBackend: TranscriptionBackend {
         try FabPaths.ensureDirectoryExists(modelsDirectory)
         // Prefer the already-installed folder: loading is then purely local
         // (works offline, no hub round-trip). Fall back to letting WhisperKit
-        // download when the model isn't on disk yet.
+        // download only when the model isn't complete on disk. The TOFU
+        // manifest (F5) is log-only here, matching Parakeet: it is not a
+        // tamper-proof boundary, and gating the local fast-path on it would
+        // force a hub round-trip (breaking offline loading and regressing
+        // load latency) on every manifest miss — including a false miss from
+        // CoreML specialization mutating a file after first load.
         let installed = ModelLayout.installedFolder(for: model, downloadBase: modelsDirectory)
             .flatMap { ModelLayout.isComplete($0) ? $0 : nil }
+        if let installed, !ModelManifestStore.verify(root: installed, relativeComponents: ModelLayout.requiredComponents) {
+            NSLog("fabulous: model manifest check failed for \(model.id) (using local copy anyway)")
+        }
         let config = WhisperKitConfig(
             model: model.id,
             downloadBase: modelsDirectory,

@@ -32,7 +32,7 @@ actor ParakeetStreamingSession: StreamingSession {
         do {
             _ = try await manager.process(audioBuffer: buffer)
         } catch {
-            NSLog("fabulous: parakeet streaming feed failed (\(error))")
+            NSLog("fabulous: parakeet streaming feed failed (\((error as NSError).domain)#\((error as NSError).code))")
         }
     }
 

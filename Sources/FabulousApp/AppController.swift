@@ -63,6 +63,13 @@ final class AppController {
     private let settingsWindow = SettingsWindowController()
     private var onboardingWindow: NSWindow?
     private var levelTask: Task<Void, Never>?
+    /// Polls `Permissions.accessibilityTrusted` at low frequency so a
+    /// mid-session revoke (the CGEventTap goes inert with no callback) still
+    /// surfaces to the user instead of the hotkey silently dying.
+    private var trustMonitorTask: Task<Void, Never>?
+    /// Clears a concealed clipboard write 60 s after it lands, unless a later
+    /// write bumps the pasteboard's changeCount first (see `safetyNet`).
+    private var concealClearTask: Task<Void, Never>?
     /// Live streaming session for the current utterance (streaming-capable engines).
     private var streamingSession: (any StreamingSession)?
     /// Creates the session off the critical path of `beginRecording`.
@@ -70,6 +77,12 @@ final class AppController {
     /// Forwards session partials to the overlay.
     private var partialsTask: Task<Void, Never>?
     private var history: HistoryStore?
+    /// Tail of the off-main history write chain. Each record/clear awaits the
+    /// previous one, so operations land in submission (FIFO) order — a bare
+    /// `Task.detached` per write would let `createdAt` order invert (breaking
+    /// cap-pruning's `ORDER BY createdAt`) and let Clear History race a
+    /// pending write, silently resurrecting a just-cleared entry.
+    private var historyWriteTask: Task<Void, Never>?
 
     private(set) var lastTranscript: String?
     /// The model currently loaded in the backend (nil while none is).
@@ -95,6 +108,14 @@ final class AppController {
 
     /// Push-to-talk / toggle lifecycle; decides start/goLive/finish from key events.
     private var recordingGate = RecordingGate()
+
+    /// Synchronous re-entrancy guard for `finishRecording()`. Set true before
+    /// its first `await`, reset in its top-level `defer`. Closes the window
+    /// where `handleCaptureFailure` (bypasses `RecordingGate`) and a concurrent
+    /// hotkey-release finish could both run the finish body — both callers are
+    /// @MainActor, so a flag flipped before any suspension is never observed
+    /// half-set by the other.
+    private var isFinishing = false
 
     /// Recordings shorter than this are almost certainly an accidental tap.
     /// Deliberately BELOW Parakeet's batch-decoder floor
@@ -180,10 +201,19 @@ final class AppController {
 
     /// Best-effort upgrade from the energy heuristic to Silero VAD. Offline
     /// or failed? The recorder just keeps trimming with EnergyVAD.
+    ///
+    /// `installIfNeeded()` (the network auto-download) already runs off-main —
+    /// it's a `nonisolated static async`, so awaiting it hops off the main
+    /// actor for us. Only the `SileroVAD(modelURL:)` CoreML compile was
+    /// main-actor-isolated, so that alone moves to a detached task (audit A5).
+    /// The compiled `SileroVAD` is `@unchecked Sendable`, so `.value` returns
+    /// it to the main actor cleanly for `setVAD`.
     private func upgradeVAD() async {
         do {
             let modelURL = try await SileroVADInstaller.installIfNeeded()
-            let vad = try SileroVAD(modelURL: modelURL)
+            let vad = try await Task.detached(priority: .utility) {
+                try SileroVAD(modelURL: modelURL)
+            }.value
             await recorder.setVAD(vad)
             NSLog("fabulous: Silero VAD active")
         } catch {
@@ -195,7 +225,33 @@ final class AppController {
     private func activateDictation() {
         hotkey.start(spec: settings.hotkeySpec)
         NSLog("fabulous: hotkey backend = \(hotkey.backend.rawValue)")
+        startAccessibilityTrustMonitor()
         Task { await ensureSelectedModelLoaded() }
+    }
+
+    /// Low-frequency runtime check for Accessibility being revoked mid-session
+    /// (e.g. via System Settings while the app is running): the CGEventTap
+    /// goes inert with no callback when that happens, so nothing else would
+    /// notice. 5 s cadence is cheap — one `AXIsProcessTrusted()` call.
+    private func startAccessibilityTrustMonitor() {
+        trustMonitorTask?.cancel()
+        trustMonitorTask = Task { [weak self] in
+            var wasTrusted = Permissions.accessibilityTrusted
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(5))
+                guard let self else { return }
+                let trusted = Permissions.accessibilityTrusted
+                if wasTrusted, !trusted {
+                    surfaceAccessibilityLoss()
+                }
+                wasTrusted = trusted
+            }
+        }
+    }
+
+    private func surfaceAccessibilityLoss() {
+        overlay.showMessage("Accessibility turned off — dictation paused")
+        NSLog("fabulous: accessibility permission lost at runtime")
     }
 
     // MARK: - Model lifecycle
@@ -362,7 +418,12 @@ final class AppController {
                 deleteModel: { [weak self] model in
                     Task { [weak self] in
                         guard let self else { return }
-                        try? await modelManager.delete(model)
+                        do {
+                            try await modelManager.delete(model)
+                        } catch {
+                            overlay.showMessage("Couldn't delete model")
+                            NSLog("fabulous: model delete failed: \(error)")
+                        }
                         await refreshModelList()
                     }
                 },
@@ -382,7 +443,24 @@ final class AppController {
                     (try? self?.history?.recent(limit: 50)) ?? []
                 },
                 clearHistory: { [weak self] in
-                    try? self?.history?.clear()
+                    guard let self else { return }
+                    // Enqueue on the write chain: a pending detached record
+                    // must land BEFORE the clear (or it would resurrect the
+                    // just-cleared entry), and any dictation recorded after
+                    // Clear must land after it. This closure is main-actor
+                    // isolated (non-Sendable closure formed in this init), so
+                    // the Task inherits @MainActor and clear() still runs on
+                    // main after the drain; failures surface via the overlay.
+                    let previous = historyWriteTask
+                    historyWriteTask = Task { [weak self] in
+                        await previous?.value
+                        do {
+                            try self?.history?.clear()
+                        } catch {
+                            self?.overlay.showMessage("Couldn't clear history")
+                            NSLog("fabulous: clear history failed: \(error)")
+                        }
+                    }
                 }
             )
         )
@@ -612,7 +690,12 @@ final class AppController {
     }
 
     private func finishRecording() async {
-        defer { _ = recordingGate.handle(.finished, mode: gateMode) }
+        guard !isFinishing else { return }
+        isFinishing = true
+        defer {
+            isFinishing = false
+            _ = recordingGate.handle(.finished, mode: gateMode)
+        }
         let releasedAt = clock.now
         hotkey.interceptEscape = false
         stopLevelUpdates()
@@ -634,6 +717,10 @@ final class AppController {
         // pass would recharge latency and re-shave padding (Whisper would hear
         // different audio than the pre-branch behaviour).
         let audioIsRaw = StreamStopPolicy.needsLazyTrim(hasSession: session != nil)
+        // Captured before `stop()`, which unconditionally clears
+        // `captureFailed` — this is the only point in the function where
+        // `recorder.isHealthy` still reflects what happened during capture.
+        let captureHealthy = await recorder.isHealthy
         var audio = await recorder.stop(trimming: StreamStopPolicy.trimAtStop(hasSession: session != nil))
         defer { audio.zero() }
         let stoppedAt = clock.now
@@ -644,7 +731,11 @@ final class AppController {
             screenContextTask = nil
             if let session { await session.cancel() }
             state = .idle
-            overlay.hide()
+            if CaptureFailureNotice.shouldNotify(captureHealthy: captureHealthy) {
+                overlay.showMessage("Mic lost — partial transcript")
+            } else {
+                overlay.hide()
+            }
             return
         }
         state = .transcribing
@@ -701,7 +792,11 @@ final class AppController {
             // the empty-final-text `.dropSilently` decision below.
             guard !cleaned.isEmpty else {
                 state = .idle
-                overlay.hide()
+                if CaptureFailureNotice.shouldNotify(captureHealthy: captureHealthy) {
+                    overlay.showMessage("Mic lost — partial transcript")
+                } else {
+                    overlay.hide()
+                }
                 return
             }
             let text: String
@@ -728,16 +823,24 @@ final class AppController {
                 overlay.hide()
                 return
             }
-            lastTranscript = text
-            statusItem.setLastTranscriptAvailable(true)
-            recordHistory(
-                text: text,
-                rawText: llmOutcome == .changed ? rawText : nil,
-                audioSeconds: transcript.audioDuration ?? audio.duration
-            )
-
-            let deliveryMethod = await deliver(text)
+            // Deliver first; only then decide persistence. deliveredAt is
+            // captured immediately after deliver() so the `delivery` metric
+            // excludes the history write (F4).
+            let outcome = await deliver(text)
             let deliveredAt = clock.now
+
+            switch HistoryPersistenceDecision.decide(outcome: outcome) {
+            case .persist:
+                lastTranscript = text
+                statusItem.setLastTranscriptAvailable(true)
+                recordHistory(
+                    text: text,
+                    rawText: llmOutcome == .changed ? rawText : nil,
+                    audioSeconds: transcript.audioDuration ?? audio.duration
+                )
+            case .concealSkip:
+                break   // AX-confirmed password: no history, no lastTranscript.
+            }
 
             state = .idle
             noteMetrics(DictationMetrics(
@@ -750,7 +853,7 @@ final class AppController {
                 delivery: deliveredAt - processedAt,
                 total: deliveredAt - releasedAt,
                 streamed: streamed,
-                deliveryMethod: deliveryMethod
+                deliveryMethod: outcome.method
             ))
         } catch {
             overlay.hide()
@@ -761,41 +864,77 @@ final class AppController {
     /// Injects the transcript — or, when injection is impossible (focus
     /// moved, secure input, all strategies failed), runs the safety net:
     /// the text goes to the clipboard and the pill says why. A transcript
-    /// is never silently lost. Returns how the text was delivered.
-    private func deliver(_ text: String) async -> DeliveryMethod {
+    /// is never silently lost. Returns how the text was delivered and, for
+    /// non-injection paths, why.
+    private func deliver(_ text: String) async -> DeliveryOutcome {
         if let target = recordingTargetPID,
            let current = NSWorkspace.shared.frontmostApplication?.processIdentifier,
            current != target
         {
             safetyNet(text, notice: "Focus changed — transcript copied to clipboard")
-            return .safetyNet
+            return DeliveryOutcome(method: .safetyNet, refusal: .focusChanged, confirmedSecureField: false)
         }
         do {
             let strategy = try await injector.inject(text)
             overlay.hide()
             // Raw values are aligned by test; fallback label can't be hit
             // without that test failing first.
-            return DeliveryMethod(rawValue: strategy.rawValue) ?? .safetyNet
+            return DeliveryOutcome(
+                method: DeliveryMethod(rawValue: strategy.rawValue) ?? .safetyNet,
+                refusal: nil,
+                confirmedSecureField: false
+            )
         } catch let InjectionError.refused(reason) {
-            let notice = switch reason {
+            switch reason {
             case .secureInputActive:
-                "Password field — transcript copied to clipboard"
+                let isPassword = FocusedFieldProbe.isSecureFieldFocused()
+                if isPassword {
+                    safetyNet(text, notice: "Password field — on clipboard 60 s", conceal: true)
+                } else {
+                    // Global secure input from another app; treat as ordinary fallback.
+                    safetyNet(text, notice: "Secure input active — transcript copied to clipboard")
+                }
+                return DeliveryOutcome(method: .safetyNet, refusal: .secureInputActive, confirmedSecureField: isPassword)
             case .accessibilityNotGranted:
-                "Accessibility revoked — transcript copied to clipboard"
+                safetyNet(text, notice: "Accessibility revoked — transcript copied to clipboard")
+                return DeliveryOutcome(method: .safetyNet, refusal: .accessibilityNotGranted, confirmedSecureField: false)
             }
-            safetyNet(text, notice: notice)
-            return .safetyNet
         } catch {
             safetyNet(text, notice: "Couldn't insert — transcript copied to clipboard")
-            return .safetyNet
+            return DeliveryOutcome(method: .safetyNet, refusal: .allStrategiesFailed, confirmedSecureField: false)
         }
     }
 
-    private func safetyNet(_ text: String, notice: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
+    private func safetyNet(_ text: String, notice: String, conceal: Bool = false) {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        if conceal {
+            let item = NSPasteboardItem()
+            item.setString(text, forType: .string)
+            item.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"))
+            pb.writeObjects([item])
+            scheduleConcealedClear(afterChangeCount: pb.changeCount)
+        } else {
+            pb.setString(text, forType: .string)
+        }
         overlay.showMessage(notice)
         NSLog("fabulous: safety net — \(notice)")
+    }
+
+    /// Clears the pasteboard 60 s after a concealed write, but only if nothing
+    /// else has written to it since (any later copy/dictation bumps changeCount
+    /// and self-defuses this). Does not survive app relaunch — past a quit the
+    /// ConcealedType marker is the only remaining protection.
+    private func scheduleConcealedClear(afterChangeCount stamp: Int) {
+        concealClearTask?.cancel()
+        concealClearTask = Task {
+            try? await Task.sleep(for: .seconds(60))
+            guard !Task.isCancelled else { return }
+            let pb = NSPasteboard.general
+            if pb.changeCount == stamp {
+                pb.clearContents()
+            }
+        }
     }
 
     private func startLevelUpdates() {
@@ -806,6 +945,10 @@ final class AppController {
                 guard let self else { return }
                 let level = await recorder.currentLevel
                 overlay.updateLevel(level)
+                if await !recorder.isHealthy {
+                    handleCaptureFailure()
+                    return
+                }
                 // Every 5th tick (~250 ms): feed fresh samples to the live
                 // session. The session ignores feeds after finish/cancel.
                 tick += 1
@@ -823,6 +966,14 @@ final class AppController {
         levelTask = nil
     }
 
+    /// Capture died mid-recording (device unplugged, re-tap failed). Salvage
+    /// whatever was captured by driving the normal finish path exactly once.
+    private func handleCaptureFailure() {
+        guard state == .recording else { return }
+        stopLevelUpdates()
+        Task { await finishRecording() }
+    }
+
     private func noteMetrics(_ metrics: DictationMetrics) {
         statusItem.setMetrics(metrics.menuSummary)
         NSLog("fabulous: \(metrics.logLine)")
@@ -838,29 +989,34 @@ final class AppController {
     private func persistMetrics(_ metrics: DictationMetrics) {
         guard let history else { return }
         let engineID = activeModelID ?? "unknown"
-        do {
-            try history.recordMetrics(MetricsEntry(
-                createdAt: Date(),
-                engineID: engineID,
-                audioSeconds: metrics.audioDuration,
-                stopTrimMs: DictationMetrics.milliseconds(metrics.stopAndTrim),
-                asrMs: DictationMetrics.milliseconds(metrics.transcription),
-                postMs: DictationMetrics.milliseconds(metrics.postProcessing),
-                deliveryMs: DictationMetrics.milliseconds(metrics.delivery),
-                totalMs: DictationMetrics.milliseconds(metrics.total),
-                streamed: metrics.streamed,
-                llmMs: DictationMetrics.milliseconds(metrics.llmCleanup),
-                llmOutcome: metrics.llmOutcome,
-                deliveryMethod: metrics.deliveryMethod
-            ))
-            let stats = try history.latencyStats(engineID: engineID)
-            statusItem.setLatencyStats(stats.map { Self.statsSummary($0, engineID: engineID) })
-            let cleanupStats = try history.cleanupStats()
-            statusItem.setCleanupStats(cleanupStats?.menuSummary)
-            let deliveryStats = try history.deliveryStats()
-            statusItem.setDeliveryStats(deliveryStats?.menuSummary)
-        } catch {
-            NSLog("fabulous: failed to record metrics: \(error)")
+        let entry = MetricsEntry(
+            createdAt: Date(),
+            engineID: engineID,
+            audioSeconds: metrics.audioDuration,
+            stopTrimMs: DictationMetrics.milliseconds(metrics.stopAndTrim),
+            asrMs: DictationMetrics.milliseconds(metrics.transcription),
+            postMs: DictationMetrics.milliseconds(metrics.postProcessing),
+            deliveryMs: DictationMetrics.milliseconds(metrics.delivery),
+            totalMs: DictationMetrics.milliseconds(metrics.total),
+            streamed: metrics.streamed,
+            llmMs: DictationMetrics.milliseconds(metrics.llmCleanup),
+            llmOutcome: metrics.llmOutcome,
+            deliveryMethod: metrics.deliveryMethod
+        )
+        Task.detached { [weak self] in
+            do {
+                try history.recordMetrics(entry)
+                let stats = try history.latencyStats(engineID: engineID)
+                let cleanupStats = try history.cleanupStats()
+                let deliveryStats = try history.deliveryStats()
+                await MainActor.run {
+                    self?.statusItem.setLatencyStats(stats.map { Self.statsSummary($0, engineID: engineID) })
+                    self?.statusItem.setCleanupStats(cleanupStats?.menuSummary)
+                    self?.statusItem.setDeliveryStats(deliveryStats?.menuSummary)
+                }
+            } catch {
+                NSLog("fabulous: failed to record metrics: \(error)")
+            }
         }
     }
 
@@ -924,16 +1080,26 @@ final class AppController {
 
     private func recordHistory(text: String, rawText: String?, audioSeconds: TimeInterval) {
         guard settings.historyEnabled, let history else { return }
-        do {
-            try history.record(
-                text: text,
-                rawText: rawText,
-                audioSeconds: audioSeconds,
-                modelID: activeModelID ?? "unknown",
-                cap: settings.historyCap
-            )
-        } catch {
-            NSLog("fabulous: failed to record history: \(error)")
+        let modelID = activeModelID ?? "unknown"
+        let cap = settings.historyCap
+        // Stamp now, not when the detached task happens to run: entries must
+        // carry dictation-time createdAt or cap-pruning keeps the wrong rows.
+        let recordedAt = Date()
+        let previous = historyWriteTask
+        historyWriteTask = Task.detached {
+            await previous?.value
+            do {
+                try history.record(
+                    text: text,
+                    rawText: rawText,
+                    audioSeconds: audioSeconds,
+                    modelID: modelID,
+                    cap: cap,
+                    date: recordedAt
+                )
+            } catch {
+                NSLog("fabulous: failed to record history: \(error)")
+            }
         }
     }
 

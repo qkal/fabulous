@@ -75,8 +75,17 @@ public actor ParakeetBackend: StreamingTranscriptionBackend {
         // internally (Task 1 finding) — `repoRoot` already ends in
         // `v3FolderName` so this lines up with what `ParakeetInstaller`
         // downloaded to.
+        let v3Root = ParakeetLayout.repoRoot(ParakeetLayout.v3FolderName, downloadBase: modelsDirectory)
+        // TOFU manifest check (F5): a mismatch does not hard-fail here —
+        // `DownloadUtils.loadModels` (inside `AsrModels.load`) already
+        // detects a CoreML model that fails to instantiate and deletes +
+        // re-downloads it, so we log and still hand the directory to that
+        // loader rather than duplicating its repair logic.
+        if !ModelManifestStore.verify(root: v3Root, relativeComponents: ParakeetLayout.v3RequiredComponents) {
+            NSLog("fabulous: parakeet v3 model manifest verification failed — attempting load anyway (FluidAudio auto-recovers corrupt files)")
+        }
         let models = try await AsrModels.load(
-            from: ParakeetLayout.repoRoot(ParakeetLayout.v3FolderName, downloadBase: modelsDirectory),
+            from: v3Root,
             configuration: AsrModels.defaultConfiguration(),
             version: .v3
         )
@@ -105,10 +114,15 @@ public actor ParakeetBackend: StreamingTranscriptionBackend {
             // `joint_decision.mlmodelc`, `vocab.json`, which is exactly what
             // `ParakeetLayout.repoRoot(eouFolderName, downloadBase:)` +
             // `ParakeetInstaller`'s `DownloadUtils.downloadRepo` produce.
+            let eouRoot = ParakeetLayout.repoRoot(ParakeetLayout.eouFolderName, downloadBase: modelsDirectory)
+            // Same TOFU check as the v3 tree above: log-only, then fall
+            // through to `loadModels`, which performs its own corrupt-file
+            // detection and re-download.
+            if !ModelManifestStore.verify(root: eouRoot, relativeComponents: ParakeetLayout.eouRequiredComponents) {
+                NSLog("fabulous: parakeet eou model manifest verification failed — attempting load anyway (FluidAudio auto-recovers corrupt files)")
+            }
             let streaming = StreamingEouAsrManager(chunkSize: .ms160, eouDebounceMs: 600_000)
-            try await streaming.loadModels(
-                from: ParakeetLayout.repoRoot(ParakeetLayout.eouFolderName, downloadBase: modelsDirectory)
-            )
+            try await streaming.loadModels(from: eouRoot)
             streamingManager = streaming
         } catch {
             NSLog("fabulous: parakeet streaming models unavailable, batch-only (\(error))")
