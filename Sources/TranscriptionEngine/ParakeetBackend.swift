@@ -56,8 +56,24 @@ public actor ParakeetBackend: StreamingTranscriptionBackend {
     /// 0.30 s, the measured cliff, after this run.
     static let batchMinimumDuration: TimeInterval = 0.30
 
+    /// FluidAudio's measured invalidAudioData cliff: exactly 4800 samples
+    /// (0.300 s @ 16 kHz) — see the batchMinimumDuration NOTE above.
+    static let batchFloorSamples = 4_800
+
     static func isBelowBatchMinimum(_ audio: FabCore.AudioBuffer) -> Bool {
         audio.duration < batchMinimumDuration
+    }
+
+    /// Short utterances get trailing digital silence up to the decoder
+    /// floor instead of being dropped — the cliff becomes unreachable.
+    /// Padding covers both the hybrid primary decode and the rescue path,
+    /// since both land in transcribe().
+    static func paddedToBatchFloor(_ audio: FabCore.AudioBuffer) -> FabCore.AudioBuffer {
+        guard audio.samples.count < batchFloorSamples else { return audio }
+        var samples = audio.samples
+        samples.append(
+            contentsOf: [Float](repeating: 0, count: batchFloorSamples - samples.count))
+        return FabCore.AudioBuffer(samples: samples, sampleRate: audio.sampleRate)
     }
 
     public func load(model: ModelDescriptor) async throws {
@@ -145,6 +161,7 @@ public actor ParakeetBackend: StreamingTranscriptionBackend {
         guard !Self.isBelowBatchMinimum(audio) else {
             return Transcript(text: "", audioDuration: audio.duration)
         }
+        let decodable = Self.paddedToBatchFloor(audio)
         // No progress polling: v3 decodes at ~190× real time, so even a
         // minute of audio finishes inside one progress-UI repaint.
         // `language: nil` = auto-detect (there is no app language setting).
@@ -168,7 +185,7 @@ public actor ParakeetBackend: StreamingTranscriptionBackend {
         var decoderState = try TdtDecoderState()
         let fluidLanguage: Language? = language.flatMap { Language(rawValue: $0.rawValue) }
         let result = try await manager.transcribe(
-            audio.samples, decoderState: &decoderState, language: fluidLanguage)
+            decodable.samples, decoderState: &decoderState, language: fluidLanguage)
         return Transcript(
             text: result.text.trimmingCharacters(in: .whitespacesAndNewlines),
             audioDuration: audio.duration
