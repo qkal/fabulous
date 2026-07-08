@@ -90,7 +90,7 @@ public enum StreamingDictation {
                     return (transcript, false)
                 }
                 // Batch empty but a session exists: try the streamed rescue.
-                if let rescued = await Self.rescue(session!) {
+                if let session, let rescued = await Self.rescue(session) {
                     return (rescued, true)
                 }
                 return (transcript, false)
@@ -119,11 +119,12 @@ public enum StreamingDictation {
 
 extension FinalTranscriptPolicy {
     /// Whisper never opens a session, so its value is inert — listed for
-    /// exhaustiveness.
+    /// exhaustiveness. Exhaustive switch on purpose: a new engine kind must
+    /// make a deliberate policy choice here, not inherit one silently.
     public static func `for`(engine: TranscriptionEngineKind) -> FinalTranscriptPolicy {
         switch engine {
         case .parakeet: .batchFinal
-        default: .streamPreferred
+        case .appleSpeech, .whisper: .streamPreferred
         }
     }
 }
