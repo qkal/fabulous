@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- **PREREQUISITE: PR #8 (`parakeet-fix-ux-test-hardening`) must be merged to main first.** This plan modifies `ParakeetBackend.isBelowBatchMinimum`/`batchMinimumDuration` which only exist after that merge. Verify before starting: `git log main --oneline | head -20` shows the PR #8 merge, and `grep -n "batchMinimumDuration" Sources/TranscriptionEngine/ParakeetBackend.swift` hits.
+- **PREREQUISITE SATISFIED 2026-07-08:** PR #8 (2290862) AND the public-readiness hardening (PR #9, 469a189) are both merged to main. `AppController.finishRecording` line anchors in this plan predate BOTH merges — always re-locate with grep, and preserve the hardening additions (safety-net gating, history write chain, secure-input handling) when threading the policy through.
 - Build must stay warning-free: `swift build --arch arm64` (arm64 only, never x86_64).
 - Run tests with `swift test` from repo root (never cd into `.build/checkouts`).
 - Swift Testing (`@Test`, `#expect`), not XCTest.

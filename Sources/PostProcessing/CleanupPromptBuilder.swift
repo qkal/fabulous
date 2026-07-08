@@ -9,10 +9,9 @@ public enum CleanupPromptBuilder {
         appName: String?
     ) -> String {
         var parts: [String] = ["""
-        You rewrite dictated speech transcripts. You MUST actively transform \
-        the input text according to the rules below — do not simply repeat \
-        or echo the input back. Every rule that applies to the input changes \
-        the output text. Apply exactly these rules:
+        You rewrite dictated speech transcripts. Apply only the rules below; \
+        if no rule applies to a part of the text, keep that part word-for-word. \
+        Apply exactly these rules:
 
         1. Remove filler words: "um", "uh", "you know", and "like" when used \
         as filler. Keep "like" when it is comparative ("looks like a bug").

@@ -136,22 +136,26 @@ public struct CleanupStats: Sendable, Equatable {
     public var p50LlmMs: Double
     public var p90LlmMs: Double
     public var fellBackCount: Int
+    public var rejectedCount: Int
 
     public init(
-        sampleCount: Int, p50LlmMs: Double, p90LlmMs: Double, fellBackCount: Int
+        sampleCount: Int, p50LlmMs: Double, p90LlmMs: Double,
+        fellBackCount: Int, rejectedCount: Int
     ) {
         self.sampleCount = sampleCount
         self.p50LlmMs = p50LlmMs
         self.p90LlmMs = p90LlmMs
         self.fellBackCount = fellBackCount
+        self.rejectedCount = rejectedCount
     }
 
-    /// e.g. "Cleanup p50 0.38 s · p90 0.71 s · fell back 2/41"
+    /// e.g. "Cleanup p50 0.38 s · p90 0.71 s · fell back 2/41 · rejected 1/41"
     public var menuSummary: String {
         let p50 = String(format: "%.2f", p50LlmMs / 1000)
         let p90 = String(format: "%.2f", p90LlmMs / 1000)
         return "Cleanup p50 \(p50) s · p90 \(p90) s"
             + " · fell back \(fellBackCount)/\(sampleCount)"
+            + " · rejected \(rejectedCount)/\(sampleCount)"
     }
 }
 
@@ -384,7 +388,8 @@ public final class HistoryStore: Sendable {
             sampleCount: rows.count,
             p50LlmMs: Self.percentile(times, 0.5),
             p90LlmMs: Self.percentile(times, 0.9),
-            fellBackCount: rows.filter { $0.llmOutcome == .fellBack }.count
+            fellBackCount: rows.filter { $0.llmOutcome == .fellBack }.count,
+            rejectedCount: rows.filter { $0.llmOutcome == .rejected }.count
         )
     }
 

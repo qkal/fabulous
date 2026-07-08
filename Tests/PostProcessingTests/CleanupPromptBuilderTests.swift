@@ -2,6 +2,15 @@ import PostProcessing
 import Testing
 
 struct CleanupPromptBuilderTests {
+    @Test func instructionsOpenWithConservativeMandate() {
+        let text = CleanupPromptBuilder.instructions(
+            userVocabulary: [], screenTerms: [], appName: nil
+        )
+        #expect(text.contains("Apply only the rules below"))
+        #expect(text.contains("keep that part word-for-word"))
+        #expect(!text.contains("MUST actively transform"))
+    }
+
     @Test func containsCoreCleanupRules() {
         let instructions = CleanupPromptBuilder.instructions(
             userVocabulary: [], screenTerms: [], appName: nil

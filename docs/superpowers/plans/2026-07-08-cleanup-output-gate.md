@@ -395,16 +395,14 @@ Expected: `hallucinatedReplyIsRejectedAndRawKept` FAILS (outcome is `.changed`, 
 
 - [ ] **Step 3: Implement**
 
-In `cleanup(_:)`, the merged vocabulary is currently assembled inside `currentInstructions()`. Compute it once and share:
+Note (post-hardening main, PR #9): `CleanupPromptBuilder.instructions` takes `userVocabulary:screenTerms:appName:` separately and there is no `mergedVocabulary` — screen terms are bias-only in the prompt (F6). For the gate, the sanctioned-novel-word list is user vocabulary plus screen terms (a legitimate screen-term substitution for an ambiguous word still yields a novel token); the gate's credit cap is what keeps that list from waving through a term-flood. In `cleanup(_:)`:
 
 ```swift
     public func cleanup(_ text: String) async -> CleanupReport {
         guard !text.isEmpty else {
             return CleanupReport(text: text, outcome: .off)
         }
-        let mergedVocabulary = Self.mergedVocabulary(user: vocabulary, screen: screenTerms)
-        let instructions = CleanupPromptBuilder.instructions(
-            vocabulary: mergedVocabulary, appName: appName)
+        let instructions = currentInstructions()
         do {
             let cleaned = try await Self.withTimeout(timeout) { [requester] in
                 try await requester.cleanup(instructions: instructions, transcript: text)
@@ -417,7 +415,7 @@ In `cleanup(_:)`, the merged vocabulary is currently assembled inside `currentIn
             }
             let stripped = Self.strippingEdgeSpaces(cleaned)
             guard CleanupOutputGate.permits(
-                raw: text, cleaned: stripped, vocabulary: mergedVocabulary
+                raw: text, cleaned: stripped, vocabulary: vocabulary + screenTerms
             ) else {
                 // Never log transcript text — term counts / outcomes only.
                 NSLog("fabulous: LLM cleanup output rejected (invented content), using raw transcript")
@@ -434,7 +432,7 @@ In `cleanup(_:)`, the merged vocabulary is currently assembled inside `currentIn
     }
 ```
 
-Keep `currentInstructions()` for `prepare()` — it must keep assembling the instructions EXACTLY the same way (prewarm session matches on exact string), so have it call the same two lines. Update the doc comment on the actor (line 51): "Invariant: may improve or no-op, never lose **or invent** text".
+`currentInstructions()` stays untouched (prewarm exact-match invariant). Update the doc comment on the actor (line 51): "Invariant: may improve or no-op, never lose **or invent** text".
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -480,7 +478,7 @@ Expected: FAIL — old opener still present.
 
 - [ ] **Step 3: Implement**
 
-Replace the opening paragraph in `CleanupPromptBuilder.instructions` (keep rules 1–4 and all examples unchanged):
+Replace the opening paragraph in `CleanupPromptBuilder.instructions` (keep rules 1–4, all examples, and the hardening-added data-quoting blocks unchanged):
 
 ```swift
         var parts: [String] = ["""

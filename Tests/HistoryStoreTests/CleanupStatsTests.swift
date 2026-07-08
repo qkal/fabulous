@@ -60,9 +60,9 @@ struct CleanupStatsTests {
 
     @Test func menuSummaryFormat() {
         let stats = CleanupStats(
-            sampleCount: 41, p50LlmMs: 380, p90LlmMs: 710, fellBackCount: 2
+            sampleCount: 41, p50LlmMs: 380, p90LlmMs: 710, fellBackCount: 2, rejectedCount: 0
         )
-        #expect(stats.menuSummary == "Cleanup p50 0.38 s · p90 0.71 s · fell back 2/41")
+        #expect(stats.menuSummary == "Cleanup p50 0.38 s · p90 0.71 s · fell back 2/41 · rejected 0/41")
     }
 
     @Test func outcomePersistsAsRawValueText() throws {
@@ -84,5 +84,24 @@ struct CleanupStatsTests {
         ))
         let stats = try store.cleanupStats()
         #expect(stats == nil)
+    }
+
+    @Test func cleanupStatsCountsRejectedRows() throws {
+        let store = try HistoryStore.inMemory()
+        let base = Date(timeIntervalSince1970: 1_000_000)
+        try store.recordMetrics(entry(llmMs: 250, llmOutcome: .rejected, at: base))
+        try store.recordMetrics(entry(llmMs: 700, llmOutcome: .fellBack, at: base.addingTimeInterval(1)))
+        try store.recordMetrics(entry(llmMs: 500, llmOutcome: .changed, at: base.addingTimeInterval(2)))
+        let stats = try #require(try store.cleanupStats())
+        #expect(stats.rejectedCount == 1)
+        #expect(stats.fellBackCount == 1)
+    }
+
+    @Test func cleanupMenuSummaryShowsRejected() {
+        let stats = CleanupStats(
+            sampleCount: 41, p50LlmMs: 380, p90LlmMs: 710,
+            fellBackCount: 2, rejectedCount: 1
+        )
+        #expect(stats.menuSummary == "Cleanup p50 0.38 s · p90 0.71 s · fell back 2/41 · rejected 1/41")
     }
 }
