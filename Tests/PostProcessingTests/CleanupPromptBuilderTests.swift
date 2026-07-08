@@ -68,4 +68,30 @@ struct CleanupPromptBuilderAuthorityTests {
         )
         #expect(s.contains("\"Terminal\""))
     }
+
+    // A harvested term containing a `"` must stay inside its delimiters — the
+    // inner quote is escaped, so it can't close the wrapper and inject text
+    // into the prompt body (residual F6 quote-breakout).
+    @Test func embeddedQuoteInScreenTermIsEscaped() {
+        let s = CleanupPromptBuilder.instructions(
+            userVocabulary: [], screenTerms: [#"Report "Q1""#], appName: nil
+        )
+        #expect(s.contains(#""Report \"Q1\"""#))
+    }
+
+    @Test func embeddedQuoteInAppNameIsEscaped() {
+        let s = CleanupPromptBuilder.instructions(
+            userVocabulary: [], screenTerms: [], appName: #"Weird"App"#
+        )
+        #expect(s.contains(#""Weird\"App""#))
+    }
+
+    // A term ending in `\` must not consume the closing quote — the backslash
+    // is escaped first, so quote-only escaping can't be defeated.
+    @Test func trailingBackslashInScreenTermCannotBreakOut() {
+        let s = CleanupPromptBuilder.instructions(
+            userVocabulary: [], screenTerms: [#"path\"#], appName: nil
+        )
+        #expect(s.contains(#""path\\""#))
+    }
 }
