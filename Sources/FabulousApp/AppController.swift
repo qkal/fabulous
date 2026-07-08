@@ -409,7 +409,12 @@ final class AppController {
                 deleteModel: { [weak self] model in
                     Task { [weak self] in
                         guard let self else { return }
-                        try? await modelManager.delete(model)
+                        do {
+                            try await modelManager.delete(model)
+                        } catch {
+                            overlay.showMessage("Couldn't delete model")
+                            NSLog("fabulous: model delete failed: \(error)")
+                        }
                         await refreshModelList()
                     }
                 },
@@ -436,11 +441,16 @@ final class AppController {
                     // Clear must land after it. This closure is main-actor
                     // isolated (non-Sendable closure formed in this init), so
                     // the Task inherits @MainActor and clear() still runs on
-                    // main after the drain, error-swallowed as before.
+                    // main after the drain; failures surface via the overlay.
                     let previous = historyWriteTask
                     historyWriteTask = Task { [weak self] in
                         await previous?.value
-                        try? self?.history?.clear()
+                        do {
+                            try self?.history?.clear()
+                        } catch {
+                            self?.overlay.showMessage("Couldn't clear history")
+                            NSLog("fabulous: clear history failed: \(error)")
+                        }
                     }
                 }
             )
