@@ -75,21 +75,10 @@ public actor FoundationModelPostProcessor: ContextualTextPostProcessor {
         screenTerms = terms
     }
 
-    /// User vocabulary first and never truncated; screen terms append,
-    /// case-insensitive dedupe. Screen terms arrive pre-capped
-    /// (SalientTermExtractor.defaultCap) — no second cap here.
-    public static func mergedVocabulary(user: [String], screen: [String]) -> [String] {
-        var seen = Set(user.map { $0.lowercased() })
-        var merged = user
-        for term in screen where seen.insert(term.lowercased()).inserted {
-            merged.append(term)
-        }
-        return merged
-    }
-
     private func currentInstructions() -> String {
         CleanupPromptBuilder.instructions(
-            vocabulary: Self.mergedVocabulary(user: vocabulary, screen: screenTerms),
+            userVocabulary: vocabulary,
+            screenTerms: screenTerms,
             appName: appName
         )
     }

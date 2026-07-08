@@ -182,14 +182,6 @@ struct FoundationModelPostProcessorTests {
 
     // MARK: - Screen terms
 
-    @Test func mergedVocabularyKeepsUserFirstAndDedupes() {
-        let merged = FoundationModelPostProcessor.mergedVocabulary(
-            user: ["WhisperKit", "Kal"],
-            screen: ["whisperkit", "ParakeetTDT", "Kal", "GRDB"]
-        )
-        #expect(merged == ["WhisperKit", "Kal", "ParakeetTDT", "GRDB"])
-    }
-
     @Test func screenTermsReachInstructions() async {
         let requester = RecordingRequester()
         let processor = FoundationModelPostProcessor(requester: requester, vocabulary: ["Kal"])
@@ -208,7 +200,9 @@ struct FoundationModelPostProcessorTests {
         _ = await processor.cleanup("hello")
         let instructions = await requester.cleanedInstructions
         #expect(instructions ==
-            [CleanupPromptBuilder.instructions(vocabulary: ["Kal"], appName: nil)])
+            [CleanupPromptBuilder.instructions(
+                userVocabulary: ["Kal"], screenTerms: [], appName: nil
+            )])
     }
 
     @Test func prepareAfterSetScreenTermsWarmsTheSessionCleanupUses() async {
