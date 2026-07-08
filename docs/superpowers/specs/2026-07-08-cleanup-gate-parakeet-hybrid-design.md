@@ -1,9 +1,11 @@
 # Cleanup hallucination gate + Parakeet hybrid mode
 
 **Date:** 2026-07-08
-**Status:** Approved by Kal (section-by-section review)
-**Prerequisite:** PR #8 (`parakeet-fix-ux-test-hardening`) merged first — this work builds
-on its D5 short-utterance guard and terminal-delivery units.
+**Status:** Approved by Kal (section-by-section review); gap-hunt pass applied 2026-07-08
+**Prerequisite:** PR B only: PR #8 (`parakeet-fix-ux-test-hardening`) merged first — the
+hybrid work builds on its D5 short-utterance guard and terminal-delivery units. PR A
+(cleanup gate) touches only `PostProcessing`, the FabCore outcome enum, and stats
+plumbing — it is independent of PR #8 and ships immediately.
 
 ## Problem
 
@@ -45,14 +47,24 @@ Hallucination *invents* words. The gate:
 - Computes the novel-word ratio of the cleaned output — cleaned words that do not appear
   in the raw transcript. Words on the merged vocabulary list (user + screen terms) count
   as expected, not novel: vocabulary substitution is the one sanctioned source of new
-  words.
+  words. **Vocabulary credit is capped** (≤ max(2, ~10% of cleaned tokens); beyond that,
+  vocabulary words count as novel) — otherwise a hallucination composed of screen terms
+  would pass the gate, which is precisely the vocabulary-echo failure mode.
 - Rejects when the novel-word ratio exceeds a threshold (empirical, expected ~0.2–0.3,
-  pinned by the test corpus — see Testing) **or** cleaned length exceeds ~1.5× raw length
-  (the "never add content" rule made mechanical).
+  pinned by the test corpus — see Testing) **or** the cleaned token count exceeds
+  `rawTokens × 1.5 + 3` (the "never add content" rule made mechanical; the absolute
+  slack keeps tiny utterances like "hi" → "Hi." from tripping a bare ratio).
+
+**Accepted limitation:** tokenization is whitespace-based. Non-spaced scripts (CJK)
+degrade to always-reject, i.e. cleanup permanently no-ops there — safe (raw text is
+delivered) and acceptable for now.
 
 **On reject:** return the raw transcript and report a new `LLMCleanupOutcome.rejected`
-case. It flows through the existing outcome plumbing into `DictationMetrics` and the menu
-stats line, so dogfood data shows how often the model goes rogue.
+case. Outcomes persist by raw string (no schema migration needed); the HistoryStore
+cleanup-stats aggregate gains a `rejectedCount` alongside `fellBackCount`, and the menu
+cleanup line shows it — dogfood data shows how often the model goes rogue. History's
+`rawText` logic needs no change: a rejected dictation inserts the raw text, so no raw
+copy is stored (same as `fellBack`).
 
 **Prompt change** (`CleanupPromptBuilder`): soften the anti-echo opener to "Apply only the
 rules below; if no rule applies to a part of the text, keep it word-for-word." The gate
@@ -82,6 +94,19 @@ seam, pure, tested) with a policy parameter:
   if batch throws or returns empty. The fallback inverts, but the invariant holds in both
   directions: a transcript is never silently lost.
 
+**Ordering (latency-critical):** under `.batchFinal` the batch decode runs *first*, without
+waiting for the streaming session to finalize. On batch success the session is
+`cancel()`ed (its EOU finalize wait is never paid for text we discard); only on batch
+failure/empty does the rescue path call `session.finish()` and use its text.
+
+**No VAD re-trim on the hybrid primary path:** the current fallback closure runs a Silero
+trim before batch — acceptable when fallback was rare, but hybrid would pay that latency
+every dictation, re-adding exactly the stop-trim cost the streaming path removed. The
+`.batchFinal` primary decode takes the untrimmed buffer as-is: v3 tolerates leading/
+trailing silence and decodes at ~190× real time, so the skipped trim costs more than the
+extra decoded silence. The `.streamPreferred` rescue closure keeps its lazy trim
+(unchanged behavior).
+
 `AppController` selects the policy from the engine kind: Parakeet → `.batchFinal`,
 Apple Speech → `.streamPreferred`. Pure decision, unit-tested.
 
@@ -94,9 +119,14 @@ pending stay-120M / hybrid / batch-only dogfood decision is resolved by this des
 (today's behavior). Batch model load failure → engine load fails → existing
 revert-to-Whisper path.
 
-**Session hygiene.** When the batch final wins, the streaming session is still properly
-`finish()`ed/`cancel()`ed — the EOU manager resets between utterances (existing
-one-session-at-a-time requirement).
+**Session hygiene.** Every path ends the session exactly once — `cancel()` when batch
+wins, `finish()` on the rescue path — so the EOU manager resets between utterances
+(existing one-session-at-a-time requirement).
+
+**Accepted UX note:** overlay partials come from the 120M model while the inserted final
+comes from v3, so the pill text and the final text can differ visibly on *every*
+dictation, not just the rare-fallback case today. Accepted: partials are a preview;
+final accuracy is the goal.
 
 ### Track 2 — Short-utterance floor (PR B)
 
@@ -117,9 +147,10 @@ words ("yes", "hi", ~0.2 s), assert non-empty and plausibly correct decode.
 
 ### Rollout
 
-1. PR #8 merges (prerequisite).
-2. **PR A — cleanup gate.** Small and urgent: bites daily, affects every engine.
-3. **PR B — Parakeet hybrid + padding.** After A.
+1. **PR A — cleanup gate.** Small and urgent: bites daily, affects every engine.
+   Independent of PR #8 — ships first, no waiting.
+2. PR #8 merges (prerequisite for PR B only).
+3. **PR B — Parakeet hybrid + padding.** After PR #8.
 4. Kal dogfoods Parakeet as daily driver. Watch: per-engine p50/p90 in the menu,
    `rejected` cleanup rate, subjective accuracy vs Whisper.
 5. Numbers hold → flip a "Recommended" badge on Parakeet in the engine picker (tiny UI
@@ -131,11 +162,15 @@ words ("yes", "hi", ~0.2 s), assert non-empty and plausibly correct decode.
 - **`CleanupOutputGate` corpus:** legitimate edits that must pass — trailing scratch-that
   wiping the whole utterance, quote…unquote (adds only quote marks), vocabulary
   substitution ("whisper kit" → "WhisperKit"), homophone fixes, filler removal, new
-  line/paragraph commands. Hallucinations that must be rejected — model answers a question
-  from the transcript, translates, continues the text, rewrites wholesale. The threshold
-  is pinned by this corpus, not chosen by feel.
+  line/paragraph commands, number normalization ("twenty three" → "23" — the model does
+  this unprompted; the corpus decides whether the threshold tolerates it or it lands on
+  the reject side as a no-op). Hallucinations that must be rejected — model answers a
+  question from the transcript, translates, continues the text, rewrites wholesale,
+  output built from vocabulary/screen terms (must exceed the vocab-credit cap). The
+  threshold is pinned by this corpus, not chosen by feel.
 - **`FinalTranscriptPolicy` matrix:** both policies × {batch ok, batch throws, batch
-  empty, stream empty, no session} — the rescue matrix is exhaustive.
+  empty, stream empty, no session} — the rescue matrix is exhaustive, including
+  session end-of-life assertions (cancelled on batch success, finished on rescue).
 - **Padding:** pure unit tests on sample counts; `FAB_REAL_ASR` empirical blip test
   decides the D5 threshold outcome.
 - **`PipelineTests` e2e:** fake streaming backend asserting the hybrid final comes from
