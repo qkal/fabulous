@@ -217,3 +217,9 @@ screen context (docs/specs/screen-context.md): AX-harvested on-screen
 vocabulary at record start → SpeechAnalyzer contextual strings + LLM
 cleanup vocab; ScreenReader module; default-on toggle in General;
 Whisper/Parakeet get the cleanup half only.
+public-readiness packaging (docs/superpowers/specs/2026-07-08-packaging-design.md):
+GPL-3.0 LICENSE, bundle-ID io.github.qkal.fabulous, PrivacyInfo.xcprivacy,
+README rewrite, dependabot + dmg SHA-256, community-health files, AI-session
+docs untracked (architecture.md kept). Repo flipped public. DEFERRED to a future
+"signing" workstream: Developer-ID signing, notarization, hardened runtime,
+Sparkle auto-update, real screenshots (needs an Apple Developer account).
