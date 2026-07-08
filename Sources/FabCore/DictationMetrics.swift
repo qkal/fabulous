@@ -12,6 +12,10 @@ public enum LLMCleanupOutcome: String, Sendable, Codable, Equatable, CaseIterabl
     /// The stage failed (throw, timeout, rejected empty output) and the raw
     /// transcript was used — the never-lose-text fallback.
     case fellBack
+    /// The model returned output that invented content (failed the
+    /// CleanupOutputGate novelty check) and the raw transcript was used —
+    /// the never-invent-text fallback.
+    case rejected
 }
 
 /// How one dictation's text reached the target app. Persisted by raw value —
