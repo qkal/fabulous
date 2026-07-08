@@ -35,7 +35,15 @@ final class AppController {
     private let parakeetBackend = ParakeetBackend()
     /// The backend dictations go through, per the engine preference.
     private var backend: any TranscriptionBackend {
-        switch settings.transcriptionEngine {
+        backendFor(settings.transcriptionEngine)
+    }
+
+    /// Backend for a specific engine kind. finishRecording resolves against
+    /// the captured `recordingEngineKind`, not the live setting — a
+    /// mid-recording picker flip must not route the batch decode through
+    /// the other engine's (unloaded) backend.
+    private func backendFor(_ kind: TranscriptionEngineKind) -> any TranscriptionBackend {
+        switch kind {
         case .appleSpeech:
             return speechAnalyzerBackend ?? whisperBackend
         case .parakeet:
@@ -754,7 +762,7 @@ final class AppController {
         let screenTerms = await collectScreenTerms()
         do {
             let capturedAudio = audio
-            let batchBackend = backend
+            let batchBackend = backendFor(recordingEngineKind)
             if let biasing = batchBackend as? any ContextBiasing {
                 await biasing.setContextualTerms(screenTerms)
             }
