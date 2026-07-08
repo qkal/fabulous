@@ -87,26 +87,30 @@ struct ParakeetBackendTests {
         #expect(await partialCount.value > 0)
     }
 
-    /// Empirical validation of the zero-padding hypothesis (Task 3's
-    /// `paddedToBatchFloor`): does a real sub-0.30 s spoken blip, padded
-    /// with trailing digital silence to the 4800-sample cliff, decode to
-    /// real text or garbage? Synthesizes "yes" and slices to the voiced
-    /// prefix so the buffer sits below the cliff — `transcribe()` then
-    /// pads it internally before handing it to FluidAudio.
+    /// Empirical validation of the zero-padding hypothesis: does a real
+    /// sub-0.30 s spoken blip, zero-padded up to the 4800-sample decoder
+    /// cliff (`paddedToBatchFloor`, applied inside `transcribe()`), decode
+    /// to real text or garbage?
     ///
-    /// DOCUMENTED NEGATIVE RESULT (empirical, 2026-07-08, 3/3 stable runs):
-    /// a padded sub-cliff blip decodes to an *empty* string, not garbage
-    /// and not the spoken word — FluidAudio's decoder needs real acoustic
-    /// content near the cliff, not just enough samples. This is why
-    /// `ParakeetBackend.batchMinimumDuration` stays at the measured 0.30 s
-    /// cliff rather than dropping to a noise floor: padding makes the
-    /// *decoder* reachable but doesn't make it *accurate* for blips this
-    /// short. Sub-threshold utterances remain Whisper's advantage; the
-    /// safety net (`AppController.safetyNet`) catches the empty-result case
-    /// visibly rather than silently losing the dictation.
+    /// POSITIVE RESULT (empirical, 2026-07-08, stable across runs):
+    /// `say`-synthesized "no" and "up" sliced to 4500 samples (~0.28 s,
+    /// below the cliff) decode to exactly "No." / "Up."; "yes" sliced the
+    /// same way decodes "Yeah." because the 4500-sample slice cuts the
+    /// final /s/ fricative (energy analysis: 99.5% of the utterance's
+    /// energy is in the slice but the sibilant tail isn't) — a faithful
+    /// decode of the truncated audio, not a decoder error. This verdict is
+    /// why `batchMinimumDuration` is a 0.05 s noise floor, not the 0.30 s
+    /// cliff.
+    ///
+    /// CAUTION: an earlier version of this test produced a false NEGATIVE
+    /// (3/3 "empty") because it fed the sub-0.30 s blip to `transcribe()`
+    /// while the guard was still 0.30 s — the guard short-circuited to ""
+    /// before the padding line and the decoder never ran. This version
+    /// goes through the production path with the 0.05 s guard, so the
+    /// 0.28 s blip clears the guard and is padded internally.
     @Test(.enabled(if: realASREnabled))
-    func paddedBlipDoesNotDecodeToText() async throws {
-        var audio = try Self.synthesize(text: "yes")
+    func paddedBlipDecodesShortUtterance() async throws {
+        var audio = try Self.synthesize(text: "no")
         if audio.samples.count >= 4_800 {
             audio = FabCore.AudioBuffer(
                 samples: Array(audio.samples.prefix(4_500)), sampleRate: 16_000)
@@ -115,9 +119,7 @@ struct ParakeetBackendTests {
         let backend = ParakeetBackend()
         try await backend.load(model: .parakeetV3)
         let transcript = try await backend.transcribe(audio, language: nil)
-        // Negative result: empty, not the word "yes" — see the doc comment
-        // above for the full verdict and its consequence for the guard.
-        #expect(transcript.text.isEmpty)
+        #expect(transcript.text.lowercased().contains("no"))
     }
 
     /// Synthesizes speech with `say` and decodes it into a mono Float32

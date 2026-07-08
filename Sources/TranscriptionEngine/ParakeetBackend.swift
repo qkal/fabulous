@@ -40,9 +40,23 @@ public actor ParakeetBackend: StreamingTranscriptionBackend {
         self.modelsDirectory = modelsDirectory
     }
 
-    /// FluidAudio's batch decoder throws `invalidAudioData` on very short
-    /// clips. The streaming→batch fallback can hand it a silence-trimmed buffer
-    /// well under this; treat those as an empty utterance rather than a throw.
+    /// Noise floor below any real spoken word — NOT the decoder floor.
+    /// `paddedToBatchFloor` makes the 4800-sample `invalidAudioData` cliff
+    /// (see `batchFloorSamples`) unreachable, and real padded blips decode
+    /// correctly (empirical, 2026-07-08, gated real-ASR test
+    /// `paddedBlipDecodesShortUtterance`: `say`-synthesized "no"/"up"
+    /// sliced to 4500 samples ≈ 0.28 s, zero-padded to 4800 → "No." /
+    /// "Up." on every run; "yes" sliced the same way decodes "Yeah."
+    /// because the slice cuts the final /s/ fricative — a faithful decode
+    /// of the truncated audio, not a decoder error). An earlier run of the
+    /// same experiment appeared to show padded blips decoding EMPTY — that
+    /// was a flawed test: this guard (then 0.30 s) short-circuited before
+    /// the padding line, so the decoder never ran. Don't trust a blip
+    /// verdict that doesn't bypass or clear this guard.
+    static let batchMinimumDuration: TimeInterval = 0.05
+
+    /// FluidAudio's measured `invalidAudioData` cliff: exactly 4800 samples
+    /// (0.300 s @ 16 kHz).
     ///
     /// NOTE (empirical, Task 6 repro): FluidAudio's real floor is a hard,
     /// exact-sample-count cliff, not a fuzzy acoustic threshold — a real
@@ -51,13 +65,7 @@ public actor ParakeetBackend: StreamingTranscriptionBackend {
     /// steps) throws `invalidAudioData` at exactly 4799 samples (0.2999... s)
     /// and succeeds at exactly 4800 samples (0.300 s) on every trial,
     /// consistently — almost certainly an internal frame/window size
-    /// requirement (4800 samples @ 16 kHz = 300 ms). The brief's original
-    /// 0.16 s default sat well inside the throwing region and was raised to
-    /// 0.30 s, the measured cliff, after this run.
-    static let batchMinimumDuration: TimeInterval = 0.30
-
-    /// FluidAudio's measured invalidAudioData cliff: exactly 4800 samples
-    /// (0.300 s @ 16 kHz) — see the batchMinimumDuration NOTE above.
+    /// requirement (4800 samples @ 16 kHz = 300 ms).
     static let batchFloorSamples = 4_800
 
     static func isBelowBatchMinimum(_ audio: FabCore.AudioBuffer) -> Bool {

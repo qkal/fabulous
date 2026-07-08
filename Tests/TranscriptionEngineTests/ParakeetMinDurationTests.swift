@@ -5,15 +5,18 @@ import Testing
 @Suite("Parakeet min duration")
 struct ParakeetMinDurationTests {
     @Test func subThresholdBufferIsBelowMinimum() {
-        // 0.05 s at 16 kHz = 800 samples — below the batch decoder floor.
-        let short = FabCore.AudioBuffer(samples: [Float](repeating: 0.1, count: 800), sampleRate: 16_000)
+        // 0.025 s at 16 kHz = 400 samples — below the 0.05 s noise floor
+        // (no real word is this short; padding rescues everything longer).
+        let short = FabCore.AudioBuffer(samples: [Float](repeating: 0.1, count: 400), sampleRate: 16_000)
         #expect(ParakeetBackend.isBelowBatchMinimum(short))
     }
 
     @Test func aboveThresholdBufferIsAllowed() {
-        // 0.5 s at 16 kHz = 8000 samples — comfortably decodable.
-        let ok = FabCore.AudioBuffer(samples: [Float](repeating: 0.1, count: 8_000), sampleRate: 16_000)
-        #expect(!ParakeetBackend.isBelowBatchMinimum(ok))
+        // 0.2 s at 16 kHz = 3200 samples — a real blip: above the 0.05 s
+        // noise floor but below the 4800-sample decoder cliff, so it is
+        // allowed through and rescued by padding (see the padding tests).
+        let blip = FabCore.AudioBuffer(samples: [Float](repeating: 0.1, count: 3_200), sampleRate: 16_000)
+        #expect(!ParakeetBackend.isBelowBatchMinimum(blip))
     }
 
     @Test func shortBufferIsPaddedToExactFloor() {
