@@ -77,6 +77,12 @@ final class AppController {
     /// Forwards session partials to the overlay.
     private var partialsTask: Task<Void, Never>?
     private var history: HistoryStore?
+    /// Tail of the off-main history write chain. Each record/clear awaits the
+    /// previous one, so operations land in submission (FIFO) order — a bare
+    /// `Task.detached` per write would let `createdAt` order invert (breaking
+    /// cap-pruning's `ORDER BY createdAt`) and let Clear History race a
+    /// pending write, silently resurrecting a just-cleared entry.
+    private var historyWriteTask: Task<Void, Never>?
 
     private(set) var lastTranscript: String?
     /// The model currently loaded in the backend (nil while none is).
@@ -423,7 +429,19 @@ final class AppController {
                     (try? self?.history?.recent(limit: 50)) ?? []
                 },
                 clearHistory: { [weak self] in
-                    try? self?.history?.clear()
+                    guard let self else { return }
+                    // Enqueue on the write chain: a pending detached record
+                    // must land BEFORE the clear (or it would resurrect the
+                    // just-cleared entry), and any dictation recorded after
+                    // Clear must land after it. This closure is main-actor
+                    // isolated (non-Sendable closure formed in this init), so
+                    // the Task inherits @MainActor and clear() still runs on
+                    // main after the drain, error-swallowed as before.
+                    let previous = historyWriteTask
+                    historyWriteTask = Task { [weak self] in
+                        await previous?.value
+                        try? self?.history?.clear()
+                    }
                 }
             )
         )
@@ -1045,14 +1063,20 @@ final class AppController {
         guard settings.historyEnabled, let history else { return }
         let modelID = activeModelID ?? "unknown"
         let cap = settings.historyCap
-        Task.detached {
+        // Stamp now, not when the detached task happens to run: entries must
+        // carry dictation-time createdAt or cap-pruning keeps the wrong rows.
+        let recordedAt = Date()
+        let previous = historyWriteTask
+        historyWriteTask = Task.detached {
+            await previous?.value
             do {
                 try history.record(
                     text: text,
                     rawText: rawText,
                     audioSeconds: audioSeconds,
                     modelID: modelID,
-                    cap: cap
+                    cap: cap,
+                    date: recordedAt
                 )
             } catch {
                 NSLog("fabulous: failed to record history: \(error)")
