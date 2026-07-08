@@ -162,12 +162,15 @@ and FluidAudio.
   untrimmed buffer — `StreamingDictation.finalTranscript` is the seam. The
   streaming path stops the recorder with `trimming: false`; do not "fix"
   that back to a trimmed stop.
-- **LLM cleanup can only improve or no-op, never lose text**: every failure
-  path in `FoundationModelPostProcessor` (throw, timeout, guardrail refusal,
-  empty output) returns the raw transcript. Empty output is accepted only
-  when the raw text contains "scratch that" — a whole-utterance scratch
-  legitimately cleans to nothing. Fresh `LanguageModelSession` per dictation
-  — session reuse accumulates context and leaks text across dictations.
+- **LLM cleanup can only improve or no-op, never lose or invent text**: every
+  failure path in `FoundationModelPostProcessor` (throw, timeout, guardrail
+  refusal, empty output) returns the raw transcript, and `CleanupOutputGate`
+  (pure, corpus-pinned) rejects model output that invents words — rejection
+  also returns the raw transcript, with outcome `.rejected` in metrics/menu.
+  Empty output is accepted only when the raw text contains "scratch that" —
+  a whole-utterance scratch legitimately cleans to nothing. Fresh
+  `LanguageModelSession` per dictation — session reuse accumulates context
+  and leaks text across dictations.
 - **Keystroke strategy can't type `\n`** via `keyboardSetUnicodeString`;
   `KeystrokeSegmenter` splits text and posts real Return key events between
   runs. Don't collapse that back into a single unicode-string post.

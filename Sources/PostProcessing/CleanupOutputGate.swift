@@ -59,17 +59,24 @@ public enum CleanupOutputGate {
     }
 
     /// Lowercased words with edge punctuation stripped; interior
-    /// apostrophes/hyphens survive ("they're", "day-to-day"). Typographic
-    /// apostrophes normalize to ASCII and diacritics fold — the model's
-    /// smart-quoting or accent restoration must not read as novel words
-    /// (folding only loosens the gate; a diacritic-only change is harmless).
+    /// apostrophes survive ("they're") but hyphens split ("follow-up" ->
+    /// "follow", "up") so the model hyphenating or de-hyphenating a compound
+    /// never reads as novel words. Typographic apostrophes normalize to
+    /// ASCII and diacritics fold — the model's smart-quoting or accent
+    /// restoration must not read as novel either (normalization only
+    /// loosens the gate; such changes are harmless to accept).
     static func tokens(_ text: String) -> [String] {
         text.lowercased()
             .replacingOccurrences(of: "\u{2019}", with: "'")
             .replacingOccurrences(of: "\u{02BC}", with: "'")
             .folding(options: .diacriticInsensitive, locale: nil)
-            .components(separatedBy: .whitespacesAndNewlines)
+            .components(separatedBy: Self.tokenSeparators)
             .map { $0.trimmingCharacters(in: .punctuationCharacters) }
             .filter { !$0.isEmpty }
     }
+
+    /// Whitespace plus hyphen/dash variants (ASCII hyphen, Unicode hyphen,
+    /// en dash) — hyphenation must tokenize identically on both sides.
+    private static let tokenSeparators = CharacterSet.whitespacesAndNewlines
+        .union(CharacterSet(charactersIn: "-\u{2010}\u{2013}"))
 }

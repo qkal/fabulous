@@ -73,6 +73,14 @@ struct CleanupOutputGateTests {
                         "Je vais à l'heure du déjeuner."))
     }
 
+    @Test func hyphenationChangePasses() {
+        // Model hyphenates compounds ASR wrote as separate words — hyphens
+        // split in tokenization, so both sides read identically.
+        #expect(permits(
+            "schedule a follow up on the x ray results",
+            "Schedule a follow-up on the X-ray results."))
+    }
+
     // MARK: hallucinations — must reject
 
     @Test func wholesaleRewriteRejected() {
