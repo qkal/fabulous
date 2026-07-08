@@ -63,6 +63,10 @@ final class AppController {
     private let settingsWindow = SettingsWindowController()
     private var onboardingWindow: NSWindow?
     private var levelTask: Task<Void, Never>?
+    /// Polls `Permissions.accessibilityTrusted` at low frequency so a
+    /// mid-session revoke (the CGEventTap goes inert with no callback) still
+    /// surfaces to the user instead of the hotkey silently dying.
+    private var trustMonitorTask: Task<Void, Never>?
     /// Clears a concealed clipboard write 60 s after it lands, unless a later
     /// write bumps the pasteboard's changeCount first (see `safetyNet`).
     private var concealClearTask: Task<Void, Never>?
@@ -206,7 +210,33 @@ final class AppController {
     private func activateDictation() {
         hotkey.start(spec: settings.hotkeySpec)
         NSLog("fabulous: hotkey backend = \(hotkey.backend.rawValue)")
+        startAccessibilityTrustMonitor()
         Task { await ensureSelectedModelLoaded() }
+    }
+
+    /// Low-frequency runtime check for Accessibility being revoked mid-session
+    /// (e.g. via System Settings while the app is running): the CGEventTap
+    /// goes inert with no callback when that happens, so nothing else would
+    /// notice. 5 s cadence is cheap — one `AXIsProcessTrusted()` call.
+    private func startAccessibilityTrustMonitor() {
+        trustMonitorTask?.cancel()
+        trustMonitorTask = Task { [weak self] in
+            var wasTrusted = Permissions.accessibilityTrusted
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(5))
+                guard let self else { return }
+                let trusted = Permissions.accessibilityTrusted
+                if wasTrusted, !trusted {
+                    surfaceAccessibilityLoss()
+                }
+                wasTrusted = trusted
+            }
+        }
+    }
+
+    private func surfaceAccessibilityLoss() {
+        overlay.showMessage("Accessibility turned off — dictation paused")
+        NSLog("fabulous: accessibility permission lost at runtime")
     }
 
     // MARK: - Model lifecycle
