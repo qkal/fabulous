@@ -22,6 +22,11 @@ public actor AudioRecorder {
     private var vad: any VoiceActivityDetecting
 
     public private(set) var isRecording = false
+    private var captureFailed = false
+
+    /// False once a mid-recording re-tap fails (`handleConfigurationChange`)
+    /// and capture has silently died. Cleared on the next `start()`/`stop()`.
+    public var isHealthy: Bool { !captureFailed }
 
     public init(vad: any VoiceActivityDetecting = EnergyVAD()) {
         self.vad = vad
@@ -48,6 +53,7 @@ public actor AudioRecorder {
             throw error
         }
         isRecording = true
+        captureFailed = false
 
         // AirPods connecting (or any default-device change) mid-session posts
         // a configuration change; the engine stops and must be rebuilt.
@@ -77,6 +83,7 @@ public actor AudioRecorder {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         isRecording = false
+        captureFailed = false
 
         var raw = tapProcessor?.drain() ?? []
         tapProcessor = nil
@@ -153,7 +160,21 @@ public actor AudioRecorder {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         // Re-tap with the new device's format; keep whatever was captured.
-        try? installTapAndStart(processor: processor)
+        do {
+            try installTapAndStart(processor: processor)
+        } catch {
+            // Device gone mid-recording and the re-tap failed: capture is now
+            // dead. Mark it so the app can salvage the pre-failure audio and
+            // tell the user, instead of freezing silently.
+            captureFailed = true
+            let code: String
+            switch error {
+            case RecorderError.noInputDevice: code = "no-input-device"
+            case RecorderError.engineStartFailed: code = "engine-start-failed"
+            default: code = "unknown"
+            }
+            NSLog("fabulous: capture died mid-recording: \(code)")
+        }
     }
 
     private func removeObserver() {
