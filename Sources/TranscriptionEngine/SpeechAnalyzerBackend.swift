@@ -79,7 +79,7 @@ public actor SpeechAnalyzerBackend: StreamingTranscriptionBackend, ContextBiasin
             do {
                 try await analyzer.setContext(Self.analysisContext(terms: terms))
             } catch {
-                NSLog("fabulous: contextual strings rejected (batch): \(error)")
+                NSLog("fabulous: contextual strings rejected (batch): \((error as NSError).domain)#\((error as NSError).code)")
             }
         }
 
@@ -350,7 +350,7 @@ actor SpeechAnalyzerStreamingSession: StreamingSession {
         do {
             try await analyzer.setContext(SpeechAnalyzerBackend.analysisContext(terms: terms))
         } catch {
-            NSLog("fabulous: contextual strings rejected (streaming): \(error)")
+            NSLog("fabulous: contextual strings rejected (streaming): \((error as NSError).domain)#\((error as NSError).code)")
         }
     }
 }
