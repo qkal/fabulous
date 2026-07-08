@@ -179,47 +179,48 @@ hotkey recorder (modifier-hold + key chords, PTT/toggle), input device
 picker, launch-at-login; model management (catalog large-v3-turbo/small/base,
 download progress, delete, hot-swap, offline detection); bottom-center
 recording overlay with level meter; transcript history (GRDB, cap 500,
-toggle + clear); phase 3 "trustworthy daily driver" (docs/specs/): stable
+toggle + clear); phase 3 "trustworthy daily driver": stable
 local signing, per-dictation latency metrics in menu + log, sound cues,
 Esc-cancels-recording, injection safety net (clipboard + overlay notice),
-focus-change guard, replacements editor tab; phase 4 "faster engine"
-(docs/specs/phase-4-faster-engine.md): SpeechAnalyzer backend behind a
+focus-change guard, replacements editor tab; phase 4 "faster engine":
+SpeechAnalyzer backend behind a
 Settings → General engine toggle (Whisper stays default — A/B measured
 2026-07-03: streamed Apple Speech p50 475 ms / p90 591 ms vs Whisper
 ~2.5 s on comparable audio, but the user chose to keep Whisper default
 for now; delivery/injection ≈370 ms is the next latency bottleneck),
 Silero VAD with EnergyVAD fallback, end-to-end pipeline tests
 (`Tests/PipelineTests`) + conditional real-engine tests; phase 5
-"streaming" (docs/specs/phase-5-streaming.md): SpeechAnalyzer sessions
+"streaming": SpeechAnalyzer sessions
 fed live during recording, overlay partials, batch fallback, `streamed`
-metrics column; paper UI restyle (docs/specs/paper-ui-restyle.md): PaperTheme
-tokens, frosted paper pill, paper settings/onboarding, theme switcher (Paper/Glass + System/Light/Dark appearance, docs/specs/theme-switcher.md);
-CI + dmg releases (docs/specs/ci-dmg-release.md): GitHub Actions
+metrics column; paper UI restyle: PaperTheme
+tokens, frosted paper pill, paper settings/onboarding, theme switcher (Paper/Glass + System/Light/Dark appearance);
+CI + dmg releases: GitHub Actions
 build+test on push/PR (macos-26, pinned), tag push v* → unsigned dmg
 attached to GitHub Release (create-dmg, version stamped from tag;
-Info.plist stays 0.0.0-dev in git); LLM post-processing
-(docs/specs/llm-post-processing.md): opt-in on-device cleanup via Apple
+Info.plist stays 0.0.0-dev in git); LLM post-processing:
+opt-in on-device cleanup via Apple
 Foundation Models — fillers, punctuation, spoken commands (new line/paragraph,
 scratch that, quote…unquote), vocabulary bias, app-name hint; raw transcript
 kept in history (`rawText`) when cleanup changed it.
-injection latency (docs/specs/injection-latency.md): paste clipboard
+injection latency: paste clipboard
 restore moved off the critical path (~370 ms → ~60 ms delivery),
 per-dictation DeliveryMethod (axInsert/paste/keystrokes/safetyNet) in
 metrics + menu "Inject" stats line;
-per-app injection overrides (docs/specs/per-app-overrides.md): Apps
+per-app injection overrides: Apps
 settings tab, AppOverride user entries layered over built-in terminal
 defaults (user wins, delete reverts), injector selector swapped live;
-Parakeet/FluidAudio backend (docs/specs/parakeet-backend.md): TDT 0.6b v3
+Parakeet/FluidAudio backend: TDT 0.6b v3
 batch + EOU 120M streaming, third engine picker option, gated Models-tab
 management, shipped 2026-07-04, dogfood decision pending (stay-120M / hybrid
 / batch-only);
-screen context (docs/specs/screen-context.md): AX-harvested on-screen
+screen context: AX-harvested on-screen
 vocabulary at record start → SpeechAnalyzer contextual strings + LLM
 cleanup vocab; ScreenReader module; default-on toggle in General;
 Whisper/Parakeet get the cleanup half only.
-public-readiness packaging (docs/superpowers/specs/2026-07-08-packaging-design.md):
+public-readiness packaging:
 GPL-3.0 LICENSE, bundle-ID io.github.qkal.fabulous, PrivacyInfo.xcprivacy,
 README rewrite, dependabot + dmg SHA-256, community-health files, AI-session
-docs untracked (architecture.md kept). Repo flipped public. DEFERRED to a future
+docs untracked (architecture.md kept). Repo-public flip is the deferred gated
+step (pending maintainer go-ahead). DEFERRED to a future
 "signing" workstream: Developer-ID signing, notarization, hardened runtime,
 Sparkle auto-update, real screenshots (needs an Apple Developer account).

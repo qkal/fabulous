@@ -49,7 +49,7 @@ jobs:
 
       - name: Build app bundle
         # No signing identity on CI -> build.sh's ad-hoc branch runs.
-        # Unsigned distribution is deliberate; see docs/specs/ci-dmg-release.md.
+        # Unsigned distribution is deliberate.
         run: scripts/build.sh
 
       - name: Package dmg
