@@ -731,7 +731,7 @@ final class AppController {
             screenContextTask = nil
             if let session { await session.cancel() }
             state = .idle
-            if CaptureFailureNotice.shouldNotify(captureHealthy: captureHealthy, transcriptEmpty: true) {
+            if CaptureFailureNotice.shouldNotify(captureHealthy: captureHealthy) {
                 overlay.showMessage("Mic lost — partial transcript")
             } else {
                 overlay.hide()
@@ -792,7 +792,7 @@ final class AppController {
             // the empty-final-text `.dropSilently` decision below.
             guard !cleaned.isEmpty else {
                 state = .idle
-                if CaptureFailureNotice.shouldNotify(captureHealthy: captureHealthy, transcriptEmpty: true) {
+                if CaptureFailureNotice.shouldNotify(captureHealthy: captureHealthy) {
                     overlay.showMessage("Mic lost — partial transcript")
                 } else {
                     overlay.hide()
@@ -1003,16 +1003,16 @@ final class AppController {
             llmOutcome: metrics.llmOutcome,
             deliveryMethod: metrics.deliveryMethod
         )
-        Task.detached {
+        Task.detached { [weak self] in
             do {
                 try history.recordMetrics(entry)
                 let stats = try history.latencyStats(engineID: engineID)
                 let cleanupStats = try history.cleanupStats()
                 let deliveryStats = try history.deliveryStats()
                 await MainActor.run {
-                    self.statusItem.setLatencyStats(stats.map { Self.statsSummary($0, engineID: engineID) })
-                    self.statusItem.setCleanupStats(cleanupStats?.menuSummary)
-                    self.statusItem.setDeliveryStats(deliveryStats?.menuSummary)
+                    self?.statusItem.setLatencyStats(stats.map { Self.statsSummary($0, engineID: engineID) })
+                    self?.statusItem.setCleanupStats(cleanupStats?.menuSummary)
+                    self?.statusItem.setDeliveryStats(deliveryStats?.menuSummary)
                 }
             } catch {
                 NSLog("fabulous: failed to record metrics: \(error)")

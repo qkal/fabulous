@@ -11,7 +11,9 @@ public enum FocusedFieldProbe {
         guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
               let element = focused, CFGetTypeID(element) == AXUIElementGetTypeID()
         else { return false }
-        let axElement = element as! AXUIElement
+        // CFGetTypeID above has proven the type; the CF downcast is total
+        // (a conditional `as?` here is a compile error — "always succeeds").
+        let axElement = unsafeDowncast(element, to: AXUIElement.self)
 
         var subrole: CFTypeRef?
         guard AXUIElementCopyAttributeValue(axElement, kAXSubroleAttribute as CFString, &subrole) == .success,
