@@ -1,3 +1,4 @@
+import CryptoKit
 import FabCore
 import Foundation
 
@@ -29,8 +30,20 @@ enum SileroVADInstaller {
         "analytics/coremldata.bin",
     ]
 
+    // Pinned to an immutable commit so the digests below match the served bytes.
+    private static let pinnedRevision = "b419383c55c110e2c9271fa6ee0ea83d03c70d96"
     private static let repoBase =
-        "https://huggingface.co/FluidInference/silero-vad-coreml/resolve/main/silero_vad.mlmodelc/"
+        "https://huggingface.co/FluidInference/silero-vad-coreml/resolve/\(pinnedRevision)/silero_vad.mlmodelc/"
+
+    /// SHA-256 of each component at `pinnedRevision`. A deliberate model bump
+    /// updates both this table and pinnedRevision together.
+    static let expectedDigests: [String: String] = [
+        "coremldata.bin": "ca7f6a0ab7a349477fed1864e6cf7cb6adf611f017c0c5f0218c694d25e1434a",
+        "metadata.json": "eb61c32ad989d6a723672104f1fa3c1a85fe9914f610153361ba1128d8ea0ebe",
+        "model.mil": "2d82e44f452039accca85910fe0aa9c7674b12687167a789110b388c06891d62",
+        "weights/weight.bin": "45846d0738d3bf5e4b6e9e7d2fddda7b1ad07da33d473f0405e51d3b6c4c11a9",
+        "analytics/coremldata.bin": "35c6d0bd3f8dd431fed72221005853ffe3621af1b550951093c41d0b918d210e",
+    ]
 
     static var isInstalled: Bool {
         requiredComponents.allSatisfy { component in
@@ -52,6 +65,12 @@ enum SileroVADInstaller {
             guard (response as? HTTPURLResponse)?.statusCode == 200 else {
                 try? FileManager.default.removeItem(at: temporary)
                 throw URLError(.badServerResponse)
+            }
+            let data = try Data(contentsOf: temporary)
+            let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+            guard digest == Self.expectedDigests[component] else {
+                try? FileManager.default.removeItem(at: temporary)
+                throw URLError(.cannotDecodeContentData)
             }
             try FabPaths.ensureDirectoryExists(destination.deletingLastPathComponent())
             // Replace, don't fail, if a racing install got there first.
