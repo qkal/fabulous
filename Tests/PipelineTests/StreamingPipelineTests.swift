@@ -173,6 +173,9 @@ import Testing
             fallback: { Transcript(text: "", audioDuration: 0) })
         #expect(transcript.text == "streamed text")
         #expect(streamed)
+        // Rescue ends the session via finish(), exactly once.
+        #expect(await session.finished)
+        #expect(await !session.cancelled)
     }
 
     @Test func batchFinalEmptyEverywhereReturnsEmptyBatch() async throws {
@@ -183,6 +186,9 @@ import Testing
             fallback: { Transcript(text: "", audioDuration: 0) })
         #expect(transcript.text.isEmpty)
         #expect(!streamed)
+        // Empty rescue still ends the session via finish(), exactly once.
+        #expect(await session.finished)
+        #expect(await !session.cancelled)
     }
 
     @Test func batchFinalThrowsBatchErrorWhenRescueAlsoDies() async throws {
