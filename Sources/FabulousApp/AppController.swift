@@ -952,29 +952,34 @@ final class AppController {
     private func persistMetrics(_ metrics: DictationMetrics) {
         guard let history else { return }
         let engineID = activeModelID ?? "unknown"
-        do {
-            try history.recordMetrics(MetricsEntry(
-                createdAt: Date(),
-                engineID: engineID,
-                audioSeconds: metrics.audioDuration,
-                stopTrimMs: DictationMetrics.milliseconds(metrics.stopAndTrim),
-                asrMs: DictationMetrics.milliseconds(metrics.transcription),
-                postMs: DictationMetrics.milliseconds(metrics.postProcessing),
-                deliveryMs: DictationMetrics.milliseconds(metrics.delivery),
-                totalMs: DictationMetrics.milliseconds(metrics.total),
-                streamed: metrics.streamed,
-                llmMs: DictationMetrics.milliseconds(metrics.llmCleanup),
-                llmOutcome: metrics.llmOutcome,
-                deliveryMethod: metrics.deliveryMethod
-            ))
-            let stats = try history.latencyStats(engineID: engineID)
-            statusItem.setLatencyStats(stats.map { Self.statsSummary($0, engineID: engineID) })
-            let cleanupStats = try history.cleanupStats()
-            statusItem.setCleanupStats(cleanupStats?.menuSummary)
-            let deliveryStats = try history.deliveryStats()
-            statusItem.setDeliveryStats(deliveryStats?.menuSummary)
-        } catch {
-            NSLog("fabulous: failed to record metrics: \(error)")
+        let entry = MetricsEntry(
+            createdAt: Date(),
+            engineID: engineID,
+            audioSeconds: metrics.audioDuration,
+            stopTrimMs: DictationMetrics.milliseconds(metrics.stopAndTrim),
+            asrMs: DictationMetrics.milliseconds(metrics.transcription),
+            postMs: DictationMetrics.milliseconds(metrics.postProcessing),
+            deliveryMs: DictationMetrics.milliseconds(metrics.delivery),
+            totalMs: DictationMetrics.milliseconds(metrics.total),
+            streamed: metrics.streamed,
+            llmMs: DictationMetrics.milliseconds(metrics.llmCleanup),
+            llmOutcome: metrics.llmOutcome,
+            deliveryMethod: metrics.deliveryMethod
+        )
+        Task.detached {
+            do {
+                try history.recordMetrics(entry)
+                let stats = try history.latencyStats(engineID: engineID)
+                let cleanupStats = try history.cleanupStats()
+                let deliveryStats = try history.deliveryStats()
+                await MainActor.run {
+                    self.statusItem.setLatencyStats(stats.map { Self.statsSummary($0, engineID: engineID) })
+                    self.statusItem.setCleanupStats(cleanupStats?.menuSummary)
+                    self.statusItem.setDeliveryStats(deliveryStats?.menuSummary)
+                }
+            } catch {
+                NSLog("fabulous: failed to record metrics: \(error)")
+            }
         }
     }
 
@@ -1038,16 +1043,20 @@ final class AppController {
 
     private func recordHistory(text: String, rawText: String?, audioSeconds: TimeInterval) {
         guard settings.historyEnabled, let history else { return }
-        do {
-            try history.record(
-                text: text,
-                rawText: rawText,
-                audioSeconds: audioSeconds,
-                modelID: activeModelID ?? "unknown",
-                cap: settings.historyCap
-            )
-        } catch {
-            NSLog("fabulous: failed to record history: \(error)")
+        let modelID = activeModelID ?? "unknown"
+        let cap = settings.historyCap
+        Task.detached {
+            do {
+                try history.record(
+                    text: text,
+                    rawText: rawText,
+                    audioSeconds: audioSeconds,
+                    modelID: modelID,
+                    cap: cap
+                )
+            } catch {
+                NSLog("fabulous: failed to record history: \(error)")
+            }
         }
     }
 
