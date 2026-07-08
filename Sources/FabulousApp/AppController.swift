@@ -201,10 +201,19 @@ final class AppController {
 
     /// Best-effort upgrade from the energy heuristic to Silero VAD. Offline
     /// or failed? The recorder just keeps trimming with EnergyVAD.
+    ///
+    /// `installIfNeeded()` (the network auto-download) already runs off-main —
+    /// it's a `nonisolated static async`, so awaiting it hops off the main
+    /// actor for us. Only the `SileroVAD(modelURL:)` CoreML compile was
+    /// main-actor-isolated, so that alone moves to a detached task (audit A5).
+    /// The compiled `SileroVAD` is `@unchecked Sendable`, so `.value` returns
+    /// it to the main actor cleanly for `setVAD`.
     private func upgradeVAD() async {
         do {
             let modelURL = try await SileroVADInstaller.installIfNeeded()
-            let vad = try SileroVAD(modelURL: modelURL)
+            let vad = try await Task.detached(priority: .utility) {
+                try SileroVAD(modelURL: modelURL)
+            }.value
             await recorder.setVAD(vad)
             NSLog("fabulous: Silero VAD active")
         } catch {
