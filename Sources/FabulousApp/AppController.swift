@@ -736,7 +736,7 @@ final class AppController {
                 audioSeconds: transcript.audioDuration ?? audio.duration
             )
 
-            let deliveryMethod = await deliver(text)
+            let outcome = await deliver(text)
             let deliveredAt = clock.now
 
             state = .idle
@@ -750,7 +750,7 @@ final class AppController {
                 delivery: deliveredAt - processedAt,
                 total: deliveredAt - releasedAt,
                 streamed: streamed,
-                deliveryMethod: deliveryMethod
+                deliveryMethod: outcome.method
             ))
         } catch {
             overlay.hide()
@@ -761,33 +761,39 @@ final class AppController {
     /// Injects the transcript — or, when injection is impossible (focus
     /// moved, secure input, all strategies failed), runs the safety net:
     /// the text goes to the clipboard and the pill says why. A transcript
-    /// is never silently lost. Returns how the text was delivered.
-    private func deliver(_ text: String) async -> DeliveryMethod {
+    /// is never silently lost. Returns how the text was delivered and, for
+    /// non-injection paths, why.
+    private func deliver(_ text: String) async -> DeliveryOutcome {
         if let target = recordingTargetPID,
            let current = NSWorkspace.shared.frontmostApplication?.processIdentifier,
            current != target
         {
             safetyNet(text, notice: "Focus changed — transcript copied to clipboard")
-            return .safetyNet
+            return DeliveryOutcome(method: .safetyNet, refusal: .focusChanged, confirmedSecureField: false)
         }
         do {
             let strategy = try await injector.inject(text)
             overlay.hide()
             // Raw values are aligned by test; fallback label can't be hit
             // without that test failing first.
-            return DeliveryMethod(rawValue: strategy.rawValue) ?? .safetyNet
+            return DeliveryOutcome(
+                method: DeliveryMethod(rawValue: strategy.rawValue) ?? .safetyNet,
+                refusal: nil,
+                confirmedSecureField: false
+            )
         } catch let InjectionError.refused(reason) {
-            let notice = switch reason {
+            switch reason {
             case .secureInputActive:
-                "Password field — transcript copied to clipboard"
+                // Probe wired in Task 4; treated as non-password until then.
+                safetyNet(text, notice: "Password field — transcript copied to clipboard")
+                return DeliveryOutcome(method: .safetyNet, refusal: .secureInputActive, confirmedSecureField: false)
             case .accessibilityNotGranted:
-                "Accessibility revoked — transcript copied to clipboard"
+                safetyNet(text, notice: "Accessibility revoked — transcript copied to clipboard")
+                return DeliveryOutcome(method: .safetyNet, refusal: .accessibilityNotGranted, confirmedSecureField: false)
             }
-            safetyNet(text, notice: notice)
-            return .safetyNet
         } catch {
             safetyNet(text, notice: "Couldn't insert — transcript copied to clipboard")
-            return .safetyNet
+            return DeliveryOutcome(method: .safetyNet, refusal: .allStrategiesFailed, confirmedSecureField: false)
         }
     }
 
