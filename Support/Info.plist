@@ -9,7 +9,7 @@
 	<key>CFBundleExecutable</key>
 	<string>fabulous</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.czapkovicz.fabulous</string>
+	<string>io.github.qkal.fabulous</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
@@ -27,7 +27,7 @@
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSHumanReadableCopyright</key>
-	<string></string>
+	<string>Copyright (C) 2026 Kal. GPL-3.0-or-later.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>fabulous records audio only while you hold the dictation hotkey and transcribes it entirely on this Mac. Audio never leaves the device.</string>
 	<key>NSPrincipalClass</key>
