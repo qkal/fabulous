@@ -66,8 +66,9 @@ public actor ParakeetBackend: StreamingTranscriptionBackend {
 
     /// Short utterances get trailing digital silence up to the decoder
     /// floor instead of being dropped — the cliff becomes unreachable.
-    /// Padding covers both the hybrid primary decode and the rescue path,
-    /// since both land in transcribe().
+    /// Covers every path through transcribe(): the hybrid (.batchFinal)
+    /// primary decode and the .streamPreferred batch fallback. The EOU
+    /// streaming session never calls transcribe() and is not padded.
     static func paddedToBatchFloor(_ audio: FabCore.AudioBuffer) -> FabCore.AudioBuffer {
         guard audio.samples.count < batchFloorSamples else { return audio }
         var samples = audio.samples
