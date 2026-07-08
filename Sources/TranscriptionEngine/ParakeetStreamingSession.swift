@@ -4,7 +4,7 @@ import Foundation
 
 /// One utterance streamed through FluidAudio's `StreamingEouAsrManager`
 /// (Parakeet EOU 120M — deliberately a smaller model than the batch path's
-/// TDT v3; see docs/specs/parakeet-backend.md).
+/// TDT v3).
 ///
 /// End-of-utterance auto-detection is FluidAudio's feature, not ours: the
 /// hotkey release decides when the utterance ends, so the EOU callback is

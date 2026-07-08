@@ -23,6 +23,7 @@ rm -rf "${APP}"
 mkdir -p "${APP}/Contents/MacOS" "${APP}/Contents/Resources"
 cp "${BIN_DIR}/fabulous" "${APP}/Contents/MacOS/fabulous"
 cp Support/Info.plist "${APP}/Contents/Info.plist"
+cp Support/PrivacyInfo.xcprivacy "${APP}/Contents/Resources/PrivacyInfo.xcprivacy"
 printf 'APPL????' > "${APP}/Contents/PkgInfo"
 
 # SwiftPM resource bundles (e.g. WhisperKit's tokenizer assets) are looked up

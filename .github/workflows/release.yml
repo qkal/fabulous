@@ -49,13 +49,15 @@ jobs:
 
       - name: Build app bundle
         # No signing identity on CI -> build.sh's ad-hoc branch runs.
-        # Unsigned distribution is deliberate; see docs/specs/ci-dmg-release.md.
+        # Unsigned distribution is deliberate.
         run: scripts/build.sh
 
       - name: Package dmg
         run: |
           brew install create-dmg
           scripts/make-dmg.sh "${GITHUB_REF_NAME#v}"
+          VERSION="${GITHUB_REF_NAME#v}"
+          ( cd build && shasum -a 256 "fabulous-${VERSION}.dmg" > "fabulous-${VERSION}.dmg.sha256" )
 
       - name: Create GitHub Release
         env:
@@ -69,5 +71,6 @@ jobs:
           cat .github/release-install-section.md >> notes.md
           gh release create "${GITHUB_REF_NAME}" \
             "build/fabulous-${VERSION}.dmg" \
+            "build/fabulous-${VERSION}.dmg.sha256" \
             --title "fabulous ${VERSION}" \
             --notes-file notes.md

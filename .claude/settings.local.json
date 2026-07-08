@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(swift --version)",
-      "Bash(xcodebuild -version)",
-      "Bash(git ls-remote *)"
-    ]
-  }
-}

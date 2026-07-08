@@ -2,22 +2,25 @@
 
 ## Shape
 
-A menu bar app (`LSUIElement`) built as a SwiftPM package of five library
-modules plus one executable. Feature modules depend only on `FabCore`; the
-executable is the only place everything meets. `TranscriptionEngine` is the
-only module that imports WhisperKit, so swapping/adding ASR backends never
-touches capture, hotkeys, or injection.
+A menu bar app (`LSUIElement`) built as a SwiftPM package of eight library
+targets plus one executable: FabCore, AudioCapture, HotkeyEngine,
+TranscriptionEngine, TextInjector, HistoryStore, ScreenReader, and
+PostProcessing. Feature targets depend only on `FabCore`; the executable is
+the only place everything meets. `TranscriptionEngine` is the only target that
+imports WhisperKit and FluidAudio; `HistoryStore` the only one importing GRDB;
+`PostProcessing` the only one importing FoundationModels.
 
 ```
               ┌─────────────────────────────────────────────────┐
               │                 FabulousApp (exe)               │
               │ AppController · StatusItem · Settings · Overlay │
               │        Onboarding · SettingsStore · Permissions │
-              └─┬────────┬────────────┬─────────────┬─────────┬─┘
-                │        │            │             │         │
-         HotkeyEngine AudioCapture TranscriptionEngine TextInjector HistoryStore
-                │        │            │             │         │
-                └────────┴──────┬─────┴─────────────┴─────────┘
+              └─┬────────┬────────────┬─────────────┬─────────┬─┐
+                │        │            │             │         │ │
+         HotkeyEngine AudioCapture TranscriptionEngine TextInjector
+              HistoryStore  ScreenReader  PostProcessing        │
+                │        │            │             │    │     │ │
+                └────────┴──────┬─────┴──────┬──────┴─────┴──────┘
                              FabCore
               (AudioBuffer · Transcript · ModelDescriptor/Catalog ·
                TextPostProcessor · ReplacementDictionary)
@@ -29,11 +32,11 @@ touches capture, hotkeys, or injection.
 hold hotkey ──► AudioRecorder.start()          (AVAudioEngine input tap)
                  │  tap thread: device format ──AVAudioConverter──► 16 kHz mono f32
 release ──────► AudioRecorder.stop()
-                 │  EnergyVAD trims leading/trailing silence
+                 │  Silero VAD (EnergyVAD fallback) trims leading/trailing silence
                  ▼
             TranscriptionBackend.transcribe(AudioBuffer)   (WhisperKit, CoreML/ANE)
                  ▼
-            TextPostProcessor pipeline        (passthrough → dictionary → LLM later)
+            TextPostProcessor pipeline    (passthrough → replacements → optional on-device LLM cleanup)
                  ▼
             TextInjector.inject(text)         (strategy chain, below)
 ```
