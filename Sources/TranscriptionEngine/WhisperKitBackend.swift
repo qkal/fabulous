@@ -29,9 +29,18 @@ public actor WhisperKitBackend: TranscriptionBackend {
         try FabPaths.ensureDirectoryExists(modelsDirectory)
         // Prefer the already-installed folder: loading is then purely local
         // (works offline, no hub round-trip). Fall back to letting WhisperKit
-        // download when the model isn't on disk yet.
+        // download when the model isn't on disk yet — also the path taken
+        // when the on-disk manifest fails to verify (F5: never trust
+        // stale/tampered files, force a fresh download instead).
         let installed = ModelLayout.installedFolder(for: model, downloadBase: modelsDirectory)
-            .flatMap { ModelLayout.isComplete($0) ? $0 : nil }
+            .flatMap { folder -> URL? in
+                guard ModelLayout.isComplete(folder) else { return nil }
+                guard ModelManifestStore.verify(root: folder, relativeComponents: ModelLayout.requiredComponents) else {
+                    NSLog("fabulous: model manifest verification failed — will re-download \(model.id)")
+                    return nil
+                }
+                return folder
+            }
         let config = WhisperKitConfig(
             model: model.id,
             downloadBase: modelsDirectory,

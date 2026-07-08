@@ -98,6 +98,17 @@ public actor ModelManager {
             guard ParakeetLayout.isInstalled(downloadBase: downloadBase) else {
                 throw ManagerError.incompleteDownload(model.id)
             }
+            // Record TOFU integrity manifests now that both repos are on
+            // disk, one per tree — write and verify (ParakeetBackend.load)
+            // must use the same root + component list per tree.
+            try? ModelManifestStore.write(
+                root: ParakeetLayout.repoRoot(ParakeetLayout.v3FolderName, downloadBase: downloadBase),
+                relativeComponents: ParakeetLayout.v3RequiredComponents
+            )
+            try? ModelManifestStore.write(
+                root: ParakeetLayout.repoRoot(ParakeetLayout.eouFolderName, downloadBase: downloadBase),
+                relativeComponents: ParakeetLayout.eouRequiredComponents
+            )
             progress(1.0)
             return ParakeetLayout.repoRoot(ParakeetLayout.v3FolderName, downloadBase: downloadBase)
         }
@@ -117,6 +128,8 @@ public actor ModelManager {
         guard ModelLayout.isComplete(folder) else {
             throw ManagerError.incompleteDownload(folder.lastPathComponent)
         }
+        // Record the TOFU integrity manifest now that all files are on disk.
+        try? ModelManifestStore.write(root: folder, relativeComponents: ModelLayout.requiredComponents)
         progress(1.0)
         return folder
     }
