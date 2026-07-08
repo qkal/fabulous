@@ -220,4 +220,29 @@ struct FoundationModelPostProcessorTests {
         #expect(prepared.count == 1)
         #expect(prepared.allSatisfy { $0.contains("ZebraTerm") })
     }
+
+    // MARK: - CleanupOutputGate
+
+    @Test func hallucinatedReplyIsRejectedAndRawKept() async {
+        let proc = processor(.reply("Here is a summary of your recent activity."))
+        let report = await proc.cleanup("remind me to call the dentist tomorrow")
+        #expect(report.text == "remind me to call the dentist tomorrow")
+        #expect(report.outcome == .rejected)
+    }
+
+    @Test func legitimateCleanupStillPassesGate() async {
+        let proc = processor(.reply("So I think we should ship it."))
+        let report = await proc.cleanup("um so I think we should uh ship it")
+        #expect(report.text == "So I think we should ship it.")
+        #expect(report.outcome == .changed)
+    }
+
+    @Test func vocabularySubstitutionPassesGate() async {
+        let proc = FoundationModelPostProcessor(
+            requester: FakeRequester(behavior: .reply("The WhisperKit backend is slow.")),
+            vocabulary: ["WhisperKit"]
+        )
+        let report = await proc.cleanup("the whisper kit backend is slow")
+        #expect(report.outcome == .changed)
+    }
 }
