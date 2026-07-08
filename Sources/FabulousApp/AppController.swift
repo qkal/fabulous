@@ -70,6 +70,10 @@ final class AppController {
     /// Clears a concealed clipboard write 60 s after it lands, unless a later
     /// write bumps the pasteboard's changeCount first (see `safetyNet`).
     private var concealClearTask: Task<Void, Never>?
+    /// Engine that owns the in-flight utterance, captured at record start —
+    /// finishRecording must not read the live setting: the picker can change
+    /// mid-recording while the session/backend stay bound to the old engine.
+    private var recordingEngineKind: TranscriptionEngineKind = .whisper
     /// Live streaming session for the current utterance (streaming-capable engines).
     private var streamingSession: (any StreamingSession)?
     /// Creates the session off the critical path of `beginRecording`.
@@ -516,6 +520,13 @@ final class AppController {
 
     /// The "we are now recording" setup, run when the gate says `.goLive`.
     private func goLive() {
+        // Bind the utterance to the engine in effect right now — before the
+        // streaming session opens against it. The engine picker can still
+        // move `settings.transcriptionEngine` mid-recording; finishRecording
+        // must resolve the policy against this captured value, not the live
+        // setting, or a flip during recording sends the wrong engine's audio
+        // through the wrong policy.
+        recordingEngineKind = settings.transcriptionEngine
         if let llmProcessor {
             llmPrewarmTask = Task {
                 await llmProcessor.setAppContext(name: recordingTargetAppName())
@@ -747,7 +758,7 @@ final class AppController {
             if let biasing = batchBackend as? any ContextBiasing {
                 await biasing.setContextualTerms(screenTerms)
             }
-            let policy = FinalTranscriptPolicy.for(engine: settings.transcriptionEngine)
+            let policy = FinalTranscriptPolicy.for(engine: recordingEngineKind)
             let (transcript, streamed) = try await StreamingDictation.finalTranscript(
                 session: session,
                 policy: policy,

@@ -54,14 +54,19 @@ public struct MetricsEntry: Codable, Sendable, Equatable, Identifiable,
     /// Duration of the transcribed audio. Streamed rows record the raw fed
     /// duration; batch rows record the VAD-trimmed duration — a small
     /// systematic skew to keep in mind when comparing engines by this column.
+    /// Parakeet hybrid batch rows are the opposite skew: audio streams live
+    /// for overlay partials, but the final decode runs over the untrimmed
+    /// buffer, so their audioSeconds reads high rather than trimmed-low.
     public var audioSeconds: Double
     public var stopTrimMs: Double
     public var asrMs: Double
     public var postMs: Double
     public var deliveryMs: Double
     public var totalMs: Double
-    /// True when the audio was streamed to the engine during recording
-    /// (phase 5); keeps p50/p90 comparisons across the change honest.
+    /// True when the final text came from the streaming session, not a batch
+    /// decode. False for batch finals — including Parakeet hybrid dictations,
+    /// where audio streams live for overlay partials but the inserted text is
+    /// the batch decode; keeps p50/p90 comparisons across engines honest.
     public var streamed: Bool
     /// Wall time of the LLM cleanup stage in milliseconds; 0 when off.
     public var llmMs: Double
