@@ -731,16 +731,24 @@ final class AppController {
                 overlay.hide()
                 return
             }
-            lastTranscript = text
-            statusItem.setLastTranscriptAvailable(true)
-            recordHistory(
-                text: text,
-                rawText: llmOutcome == .changed ? rawText : nil,
-                audioSeconds: transcript.audioDuration ?? audio.duration
-            )
-
+            // Deliver first; only then decide persistence. deliveredAt is
+            // captured immediately after deliver() so the `delivery` metric
+            // excludes the history write (F4).
             let outcome = await deliver(text)
             let deliveredAt = clock.now
+
+            switch HistoryPersistenceDecision.decide(outcome: outcome) {
+            case .persist:
+                lastTranscript = text
+                statusItem.setLastTranscriptAvailable(true)
+                recordHistory(
+                    text: text,
+                    rawText: llmOutcome == .changed ? rawText : nil,
+                    audioSeconds: transcript.audioDuration ?? audio.duration
+                )
+            case .concealSkip:
+                break   // AX-confirmed password: no history, no lastTranscript.
+            }
 
             state = .idle
             noteMetrics(DictationMetrics(
