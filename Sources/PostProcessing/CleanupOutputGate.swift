@@ -23,7 +23,11 @@ public enum CleanupOutputGate {
     public static func permits(raw: String, cleaned: String, vocabulary: [String]) -> Bool {
         let rawTokens = tokens(raw)
         let cleanedTokens = tokens(cleaned)
-        guard !cleanedTokens.isEmpty else { return true }  // empty handled upstream
+        // Punctuation-only output has no tokens but is NOT empty upstream
+        // (only whitespace-empty short-circuits there): permitting it would
+        // replace the transcript with "..." — reject unless raw itself had
+        // no tokens (pure punctuation echo).
+        guard !cleanedTokens.isEmpty else { return rawTokens.isEmpty }
 
         // "Never add content", mechanically: absolute slack keeps tiny
         // utterances ("hi" -> "Hi.") from tripping a bare ratio.
@@ -55,9 +59,15 @@ public enum CleanupOutputGate {
     }
 
     /// Lowercased words with edge punctuation stripped; interior
-    /// apostrophes/hyphens survive ("they're", "day-to-day").
+    /// apostrophes/hyphens survive ("they're", "day-to-day"). Typographic
+    /// apostrophes normalize to ASCII and diacritics fold — the model's
+    /// smart-quoting or accent restoration must not read as novel words
+    /// (folding only loosens the gate; a diacritic-only change is harmless).
     static func tokens(_ text: String) -> [String] {
         text.lowercased()
+            .replacingOccurrences(of: "\u{2019}", with: "'")
+            .replacingOccurrences(of: "\u{02BC}", with: "'")
+            .folding(options: .diacriticInsensitive, locale: nil)
             .components(separatedBy: .whitespacesAndNewlines)
             .map { $0.trimmingCharacters(in: .punctuationCharacters) }
             .filter { !$0.isEmpty }

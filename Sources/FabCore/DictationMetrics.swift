@@ -43,7 +43,7 @@ public struct DictationMetrics: Sendable, Equatable {
     public var transcription: Duration
     /// Wall time of the LLM cleanup stage; .zero when the stage was off.
     public var llmCleanup: Duration
-    /// What the LLM cleanup stage did (off / unchanged / changed / fellBack).
+    /// What the LLM cleanup stage did (off / unchanged / changed / fellBack / rejected).
     public var llmOutcome: LLMCleanupOutcome
     public var postProcessing: Duration
     /// Injection, or the clipboard fallback when injection was refused.

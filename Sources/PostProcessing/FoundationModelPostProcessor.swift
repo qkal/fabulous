@@ -114,6 +114,10 @@ public actor FoundationModelPostProcessor: ContextualTextPostProcessor {
                     : CleanupReport(text: text, outcome: .fellBack)
             }
             let stripped = Self.strippingEdgeSpaces(cleaned)
+            // Gate compares post-strip cleaned vs raw-as-transcribed; edge
+            // space/tab stripping cannot change the token stream (tokens
+            // split on whitespace and edge-trim punctuation), so the
+            // comparison is symmetric.
             guard CleanupOutputGate.permits(
                 raw: text, cleaned: stripped, vocabulary: vocabulary + screenTerms
             ) else {

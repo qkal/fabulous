@@ -62,6 +62,17 @@ struct CleanupOutputGateTests {
         #expect(permits("ship it today", "ship it today"))
     }
 
+    @Test func typographicApostrophePasses() {
+        // Model smart-quotes the contraction ASR wrote with ASCII '.
+        #expect(permits("don't forget the do not disturb toggle",
+                        "Don\u{2019}t forget the Do Not Disturb toggle."))
+    }
+
+    @Test func diacriticRestorationPasses() {
+        #expect(permits("je vais a l'heure du dejeuner",
+                        "Je vais à l'heure du déjeuner."))
+    }
+
     // MARK: hallucinations — must reject
 
     @Test func wholesaleRewriteRejected() {
@@ -116,5 +127,24 @@ struct CleanupOutputGateTests {
         // Accepted limitation: whitespace tokenization degrades CJK to
         // always-reject (cleanup no-ops there, raw text is delivered).
         #expect(!permits("こんにちは", "今日は天気がいいですね"))
+    }
+
+    @Test func punctuationOnlyOutputRejected() {
+        // "..." survives upstream whitespace-emptiness and must not
+        // replace the transcript.
+        #expect(!permits("remind me to call the dentist", "..."))
+    }
+
+    // MARK: deliberate strictness — substitution on a tiny utterance is
+    // indistinguishable from replacement, so reject (raw text delivered)
+    // wins. Dogfood watches the rejected counter; if this stings, loosen
+    // via tokenizer normalization, not the ratio.
+
+    @Test func tinyUtteranceHomophoneRejects() {
+        #expect(!permits("their late", "They're late."))
+    }
+
+    @Test func tinyUtteranceNumberRejects() {
+        #expect(!permits("twenty three", "23."))
     }
 }
