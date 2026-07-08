@@ -99,6 +99,14 @@ final class AppController {
     /// Push-to-talk / toggle lifecycle; decides start/goLive/finish from key events.
     private var recordingGate = RecordingGate()
 
+    /// Synchronous re-entrancy guard for `finishRecording()`. Set true before
+    /// its first `await`, reset in its top-level `defer`. Closes the window
+    /// where `handleCaptureFailure` (bypasses `RecordingGate`) and a concurrent
+    /// hotkey-release finish could both run the finish body — both callers are
+    /// @MainActor, so a flag flipped before any suspension is never observed
+    /// half-set by the other.
+    private var isFinishing = false
+
     /// Recordings shorter than this are almost certainly an accidental tap.
     /// Deliberately BELOW Parakeet's batch-decoder floor
     /// (`ParakeetBackend.batchMinimumDuration`, 0.30 s): a raw utterance that
@@ -615,7 +623,12 @@ final class AppController {
     }
 
     private func finishRecording() async {
-        defer { _ = recordingGate.handle(.finished, mode: gateMode) }
+        guard !isFinishing else { return }
+        isFinishing = true
+        defer {
+            isFinishing = false
+            _ = recordingGate.handle(.finished, mode: gateMode)
+        }
         let releasedAt = clock.now
         hotkey.interceptEscape = false
         stopLevelUpdates()
@@ -637,6 +650,10 @@ final class AppController {
         // pass would recharge latency and re-shave padding (Whisper would hear
         // different audio than the pre-branch behaviour).
         let audioIsRaw = StreamStopPolicy.needsLazyTrim(hasSession: session != nil)
+        // Captured before `stop()`, which unconditionally clears
+        // `captureFailed` — this is the only point in the function where
+        // `recorder.isHealthy` still reflects what happened during capture.
+        let captureHealthy = await recorder.isHealthy
         var audio = await recorder.stop(trimming: StreamStopPolicy.trimAtStop(hasSession: session != nil))
         defer { audio.zero() }
         let stoppedAt = clock.now
@@ -647,7 +664,11 @@ final class AppController {
             screenContextTask = nil
             if let session { await session.cancel() }
             state = .idle
-            overlay.hide()
+            if CaptureFailureNotice.shouldNotify(captureHealthy: captureHealthy, transcriptEmpty: true) {
+                overlay.showMessage("Mic lost — partial transcript")
+            } else {
+                overlay.hide()
+            }
             return
         }
         state = .transcribing
@@ -704,7 +725,11 @@ final class AppController {
             // the empty-final-text `.dropSilently` decision below.
             guard !cleaned.isEmpty else {
                 state = .idle
-                overlay.hide()
+                if CaptureFailureNotice.shouldNotify(captureHealthy: captureHealthy, transcriptEmpty: true) {
+                    overlay.showMessage("Mic lost — partial transcript")
+                } else {
+                    overlay.hide()
+                }
                 return
             }
             let text: String
@@ -853,6 +878,10 @@ final class AppController {
                 guard let self else { return }
                 let level = await recorder.currentLevel
                 overlay.updateLevel(level)
+                if await !recorder.isHealthy {
+                    handleCaptureFailure()
+                    return
+                }
                 // Every 5th tick (~250 ms): feed fresh samples to the live
                 // session. The session ignores feeds after finish/cancel.
                 tick += 1
@@ -868,6 +897,14 @@ final class AppController {
     private func stopLevelUpdates() {
         levelTask?.cancel()
         levelTask = nil
+    }
+
+    /// Capture died mid-recording (device unplugged, re-tap failed). Salvage
+    /// whatever was captured by driving the normal finish path exactly once.
+    private func handleCaptureFailure() {
+        guard state == .recording else { return }
+        stopLevelUpdates()
+        Task { await finishRecording() }
     }
 
     private func noteMetrics(_ metrics: DictationMetrics) {
