@@ -63,6 +63,9 @@ final class AppController {
     private let settingsWindow = SettingsWindowController()
     private var onboardingWindow: NSWindow?
     private var levelTask: Task<Void, Never>?
+    /// Clears a concealed clipboard write 60 s after it lands, unless a later
+    /// write bumps the pasteboard's changeCount first (see `safetyNet`).
+    private var concealClearTask: Task<Void, Never>?
     /// Live streaming session for the current utterance (streaming-capable engines).
     private var streamingSession: (any StreamingSession)?
     /// Creates the session off the critical path of `beginRecording`.
@@ -784,9 +787,14 @@ final class AppController {
         } catch let InjectionError.refused(reason) {
             switch reason {
             case .secureInputActive:
-                // Probe wired in Task 4; treated as non-password until then.
-                safetyNet(text, notice: "Password field — transcript copied to clipboard")
-                return DeliveryOutcome(method: .safetyNet, refusal: .secureInputActive, confirmedSecureField: false)
+                let isPassword = FocusedFieldProbe.isSecureFieldFocused()
+                if isPassword {
+                    safetyNet(text, notice: "Password field — on clipboard 60 s", conceal: true)
+                } else {
+                    // Global secure input from another app; treat as ordinary fallback.
+                    safetyNet(text, notice: "Secure input active — transcript copied to clipboard")
+                }
+                return DeliveryOutcome(method: .safetyNet, refusal: .secureInputActive, confirmedSecureField: isPassword)
             case .accessibilityNotGranted:
                 safetyNet(text, notice: "Accessibility revoked — transcript copied to clipboard")
                 return DeliveryOutcome(method: .safetyNet, refusal: .accessibilityNotGranted, confirmedSecureField: false)
@@ -797,11 +805,36 @@ final class AppController {
         }
     }
 
-    private func safetyNet(_ text: String, notice: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
+    private func safetyNet(_ text: String, notice: String, conceal: Bool = false) {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        if conceal {
+            let item = NSPasteboardItem()
+            item.setString(text, forType: .string)
+            item.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"))
+            pb.writeObjects([item])
+            scheduleConcealedClear(afterChangeCount: pb.changeCount)
+        } else {
+            pb.setString(text, forType: .string)
+        }
         overlay.showMessage(notice)
         NSLog("fabulous: safety net — \(notice)")
+    }
+
+    /// Clears the pasteboard 60 s after a concealed write, but only if nothing
+    /// else has written to it since (any later copy/dictation bumps changeCount
+    /// and self-defuses this). Does not survive app relaunch — past a quit the
+    /// ConcealedType marker is the only remaining protection.
+    private func scheduleConcealedClear(afterChangeCount stamp: Int) {
+        concealClearTask?.cancel()
+        concealClearTask = Task {
+            try? await Task.sleep(for: .seconds(60))
+            guard !Task.isCancelled else { return }
+            let pb = NSPasteboard.general
+            if pb.changeCount == stamp {
+                pb.clearContents()
+            }
+        }
     }
 
     private func startLevelUpdates() {
