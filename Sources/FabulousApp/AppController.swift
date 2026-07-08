@@ -747,13 +747,19 @@ final class AppController {
             if let biasing = batchBackend as? any ContextBiasing {
                 await biasing.setContextualTerms(screenTerms)
             }
+            let policy = FinalTranscriptPolicy.for(engine: settings.transcriptionEngine)
             let (transcript, streamed) = try await StreamingDictation.finalTranscript(
                 session: session,
+                policy: policy,
                 fallback: { [recorder] in
-                    // Raw buffer (a session existed at stop) still needs its
-                    // one VAD pass; a pre-trimmed buffer is used as-is — the
-                    // recorder already returns empty when VAD heard nothing.
-                    if audioIsRaw {
+                    // Raw buffer + streamPreferred: the rare batch fallback
+                    // still needs its one VAD pass; a pre-trimmed buffer is
+                    // used as-is — the recorder already returns empty when
+                    // VAD heard nothing. Raw buffer + batchFinal: decode
+                    // untrimmed — this runs every dictation and the trim
+                    // would re-add exactly the stop-latency streaming
+                    // removed; v3 shrugs at silence.
+                    if audioIsRaw && policy == .streamPreferred {
                         var trimmed = await recorder.trimSilence(capturedAudio)
                         defer { trimmed.zero() }
                         guard !trimmed.isEmpty else {

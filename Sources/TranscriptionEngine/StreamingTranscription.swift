@@ -116,3 +116,14 @@ public enum StreamingDictation {
         }
     }
 }
+
+extension FinalTranscriptPolicy {
+    /// Whisper never opens a session, so its value is inert — listed for
+    /// exhaustiveness.
+    public static func `for`(engine: TranscriptionEngineKind) -> FinalTranscriptPolicy {
+        switch engine {
+        case .parakeet: .batchFinal
+        default: .streamPreferred
+        }
+    }
+}

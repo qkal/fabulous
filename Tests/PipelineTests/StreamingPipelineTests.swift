@@ -204,4 +204,10 @@ import Testing
         #expect(transcript.text == "batch text")
         #expect(!streamed)
     }
+
+    @Test func policyPerEngine() {
+        #expect(FinalTranscriptPolicy.for(engine: .parakeet) == .batchFinal)
+        #expect(FinalTranscriptPolicy.for(engine: .appleSpeech) == .streamPreferred)
+        #expect(FinalTranscriptPolicy.for(engine: .whisper) == .streamPreferred)
+    }
 }
