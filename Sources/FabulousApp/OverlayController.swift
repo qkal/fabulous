@@ -83,6 +83,14 @@ final class OverlayController {
     func showMessage(_ text: String, hideAfter seconds: Double = 3) {
         model.phase = .message(text)
         show()
+        NSAccessibility.post(
+            element: NSApp as Any,
+            notification: .announcementRequested,
+            userInfo: [
+                .announcement: text,
+                .priority: NSAccessibilityPriorityLevel.high.rawValue,
+            ]
+        )
         messageTask?.cancel()
         messageTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(seconds))
