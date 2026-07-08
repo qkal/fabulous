@@ -4,3 +4,9 @@ build/
 *.xcodeproj
 xcuserdata/
 .DS_Store
+# AI-session design docs + local plans (kept on disk, not published)
+docs/plans/
+docs/superpowers/
+docs/specs/
+# Local Claude Code settings
+.claude/settings.local.json
