@@ -50,8 +50,10 @@ public struct DictationMetrics: Sendable, Equatable {
     public var delivery: Duration
     /// Hotkey release → text delivered.
     public var total: Duration
-    /// True when the audio was fed to the engine live during recording, so
-    /// `transcription` is just the finalize wait (phase-5 streaming path).
+    /// True when the final text came from the streaming session (`transcription`
+    /// ≈ the finalize wait). False for batch finals — including Parakeet hybrid
+    /// dictations, where audio streams live for overlay partials but the
+    /// inserted text is the batch decode.
     public var streamed: Bool
     /// How the text reached the target app. Defaults to the conservative
     /// safety-net label; the production caller always passes the real value.

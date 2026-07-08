@@ -137,4 +137,83 @@ import Testing
         #expect(fed.map(\.count) == [100, 100, 100])
         #expect(abs(fed[2][0] - 0.3) < 0.001)
     }
+
+    // MARK: .batchFinal (hybrid) matrix
+
+    @Test func batchFinalUsesBatchAndCancelsSession() async throws {
+        let session = FakeSession(
+            finishResult: .success(Transcript(text: "streamed text", audioDuration: 1)))
+        let (transcript, streamed) = try await StreamingDictation.finalTranscript(
+            session: session, policy: .batchFinal,
+            fallback: { Self.batchTranscript() })
+        #expect(transcript.text == "batch text")
+        #expect(!streamed)
+        // EOU finalize wait is never paid for text we discard.
+        #expect(await session.cancelled)
+        #expect(await !session.finished)
+    }
+
+    @Test func batchFinalRescuesFromStreamWhenBatchThrows() async throws {
+        struct BatchDied: Error {}
+        let session = FakeSession(
+            finishResult: .success(Transcript(text: "streamed text", audioDuration: 1)))
+        let (transcript, streamed) = try await StreamingDictation.finalTranscript(
+            session: session, policy: .batchFinal,
+            fallback: { throw BatchDied() })
+        #expect(transcript.text == "streamed text")
+        #expect(streamed)
+        #expect(await session.finished)
+    }
+
+    @Test func batchFinalRescuesFromStreamWhenBatchIsEmpty() async throws {
+        let session = FakeSession(
+            finishResult: .success(Transcript(text: "streamed text", audioDuration: 1)))
+        let (transcript, streamed) = try await StreamingDictation.finalTranscript(
+            session: session, policy: .batchFinal,
+            fallback: { Transcript(text: "", audioDuration: 0) })
+        #expect(transcript.text == "streamed text")
+        #expect(streamed)
+        // Rescue ends the session via finish(), exactly once.
+        #expect(await session.finished)
+        #expect(await !session.cancelled)
+    }
+
+    @Test func batchFinalEmptyEverywhereReturnsEmptyBatch() async throws {
+        let session = FakeSession(
+            finishResult: .success(Transcript(text: "", audioDuration: 0)))
+        let (transcript, streamed) = try await StreamingDictation.finalTranscript(
+            session: session, policy: .batchFinal,
+            fallback: { Transcript(text: "", audioDuration: 0) })
+        #expect(transcript.text.isEmpty)
+        #expect(!streamed)
+        // Empty rescue still ends the session via finish(), exactly once.
+        #expect(await session.finished)
+        #expect(await !session.cancelled)
+    }
+
+    @Test func batchFinalThrowsBatchErrorWhenRescueAlsoDies() async throws {
+        struct BatchDied: Error {}
+        let session = FakeSession(finishResult: .failure(SessionDied()))
+        await #expect(throws: BatchDied.self) {
+            _ = try await StreamingDictation.finalTranscript(
+                session: session, policy: .batchFinal,
+                fallback: { throw BatchDied() })
+        }
+        // Session must still be ended exactly once (cancel after failed finish).
+        #expect(await session.cancelled)
+    }
+
+    @Test func batchFinalWithoutSessionJustRunsBatch() async throws {
+        let (transcript, streamed) = try await StreamingDictation.finalTranscript(
+            session: nil, policy: .batchFinal,
+            fallback: { Self.batchTranscript() })
+        #expect(transcript.text == "batch text")
+        #expect(!streamed)
+    }
+
+    @Test func policyPerEngine() {
+        #expect(FinalTranscriptPolicy.for(engine: .parakeet) == .batchFinal)
+        #expect(FinalTranscriptPolicy.for(engine: .appleSpeech) == .streamPreferred)
+        #expect(FinalTranscriptPolicy.for(engine: .whisper) == .streamPreferred)
+    }
 }

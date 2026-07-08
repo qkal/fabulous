@@ -35,7 +35,15 @@ final class AppController {
     private let parakeetBackend = ParakeetBackend()
     /// The backend dictations go through, per the engine preference.
     private var backend: any TranscriptionBackend {
-        switch settings.transcriptionEngine {
+        backendFor(settings.transcriptionEngine)
+    }
+
+    /// Backend for a specific engine kind. finishRecording resolves against
+    /// the captured `recordingEngineKind`, not the live setting — a
+    /// mid-recording picker flip must not route the batch decode through
+    /// the other engine's (unloaded) backend.
+    private func backendFor(_ kind: TranscriptionEngineKind) -> any TranscriptionBackend {
+        switch kind {
         case .appleSpeech:
             return speechAnalyzerBackend ?? whisperBackend
         case .parakeet:
@@ -70,6 +78,10 @@ final class AppController {
     /// Clears a concealed clipboard write 60 s after it lands, unless a later
     /// write bumps the pasteboard's changeCount first (see `safetyNet`).
     private var concealClearTask: Task<Void, Never>?
+    /// Engine that owns the in-flight utterance, captured at record start —
+    /// finishRecording must not read the live setting: the picker can change
+    /// mid-recording while the session/backend stay bound to the old engine.
+    private var recordingEngineKind: TranscriptionEngineKind = .whisper
     /// Live streaming session for the current utterance (streaming-capable engines).
     private var streamingSession: (any StreamingSession)?
     /// Creates the session off the critical path of `beginRecording`.
@@ -118,12 +130,12 @@ final class AppController {
     private var isFinishing = false
 
     /// Recordings shorter than this are almost certainly an accidental tap.
-    /// Deliberately BELOW Parakeet's batch-decoder floor
-    /// (`ParakeetBackend.batchMinimumDuration`, 0.30 s): a raw utterance that
-    /// passes this guard but VAD-trims into the 0.25–0.30 s band returns empty
-    /// on Parakeet (never a thrown `invalidAudioData`) where Whisper would still
-    /// decode a word. Don't raise this toward 0.30 to "align" them — that only
-    /// widens the Whisper drop zone; the two floors are intentionally separate.
+    /// This is an intent guard, independent of Parakeet's noise floor
+    /// (`ParakeetBackend.batchMinimumDuration`, 0.05 s): utterances that pass
+    /// here but sit under FluidAudio's 4800-sample decoder cliff are
+    /// zero-padded up to it and decode fine (verified against the real
+    /// engine 2026-07-08 — see `paddedBlipDecodesShortUtterance`), so
+    /// there is no Parakeet drop zone above this guard anymore.
     private let minimumUtteranceDuration: TimeInterval = 0.25
 
     /// Glass is always dark — its fixed graphite surfaces need dark-mode
@@ -516,6 +528,13 @@ final class AppController {
 
     /// The "we are now recording" setup, run when the gate says `.goLive`.
     private func goLive() {
+        // Bind the utterance to the engine in effect right now — before the
+        // streaming session opens against it. The engine picker can still
+        // move `settings.transcriptionEngine` mid-recording; finishRecording
+        // must resolve the policy against this captured value, not the live
+        // setting, or a flip during recording sends the wrong engine's audio
+        // through the wrong policy.
+        recordingEngineKind = settings.transcriptionEngine
         if let llmProcessor {
             llmPrewarmTask = Task {
                 await llmProcessor.setAppContext(name: recordingTargetAppName())
@@ -743,17 +762,23 @@ final class AppController {
         let screenTerms = await collectScreenTerms()
         do {
             let capturedAudio = audio
-            let batchBackend = backend
+            let batchBackend = backendFor(recordingEngineKind)
             if let biasing = batchBackend as? any ContextBiasing {
                 await biasing.setContextualTerms(screenTerms)
             }
+            let policy = FinalTranscriptPolicy.for(engine: recordingEngineKind)
             let (transcript, streamed) = try await StreamingDictation.finalTranscript(
                 session: session,
+                policy: policy,
                 fallback: { [recorder] in
-                    // Raw buffer (a session existed at stop) still needs its
-                    // one VAD pass; a pre-trimmed buffer is used as-is — the
-                    // recorder already returns empty when VAD heard nothing.
-                    if audioIsRaw {
+                    // Raw buffer + streamPreferred: the rare batch fallback
+                    // still needs its one VAD pass; a pre-trimmed buffer is
+                    // used as-is — the recorder already returns empty when
+                    // VAD heard nothing. Raw buffer + batchFinal: decode
+                    // untrimmed — this runs every dictation and the trim
+                    // would re-add exactly the stop-latency streaming
+                    // removed; v3 shrugs at silence.
+                    if audioIsRaw && policy == .streamPreferred {
                         var trimmed = await recorder.trimSilence(capturedAudio)
                         defer { trimmed.zero() }
                         guard !trimmed.isEmpty else {

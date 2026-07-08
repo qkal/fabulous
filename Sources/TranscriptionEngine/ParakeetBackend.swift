@@ -40,9 +40,23 @@ public actor ParakeetBackend: StreamingTranscriptionBackend {
         self.modelsDirectory = modelsDirectory
     }
 
-    /// FluidAudio's batch decoder throws `invalidAudioData` on very short
-    /// clips. The streaming→batch fallback can hand it a silence-trimmed buffer
-    /// well under this; treat those as an empty utterance rather than a throw.
+    /// Noise floor below any real spoken word — NOT the decoder floor.
+    /// `paddedToBatchFloor` makes the 4800-sample `invalidAudioData` cliff
+    /// (see `batchFloorSamples`) unreachable, and real padded blips decode
+    /// correctly (empirical, 2026-07-08, gated real-ASR test
+    /// `paddedBlipDecodesShortUtterance`: `say`-synthesized "no"/"up"
+    /// sliced to 4500 samples ≈ 0.28 s, zero-padded to 4800 → "No." /
+    /// "Up." on every run; "yes" sliced the same way decodes "Yeah."
+    /// because the slice cuts the final /s/ fricative — a faithful decode
+    /// of the truncated audio, not a decoder error). An earlier run of the
+    /// same experiment appeared to show padded blips decoding EMPTY — that
+    /// was a flawed test: this guard (then 0.30 s) short-circuited before
+    /// the padding line, so the decoder never ran. Don't trust a blip
+    /// verdict that doesn't bypass or clear this guard.
+    static let batchMinimumDuration: TimeInterval = 0.05
+
+    /// FluidAudio's measured `invalidAudioData` cliff: exactly 4800 samples
+    /// (0.300 s @ 16 kHz).
     ///
     /// NOTE (empirical, Task 6 repro): FluidAudio's real floor is a hard,
     /// exact-sample-count cliff, not a fuzzy acoustic threshold — a real
@@ -51,13 +65,24 @@ public actor ParakeetBackend: StreamingTranscriptionBackend {
     /// steps) throws `invalidAudioData` at exactly 4799 samples (0.2999... s)
     /// and succeeds at exactly 4800 samples (0.300 s) on every trial,
     /// consistently — almost certainly an internal frame/window size
-    /// requirement (4800 samples @ 16 kHz = 300 ms). The brief's original
-    /// 0.16 s default sat well inside the throwing region and was raised to
-    /// 0.30 s, the measured cliff, after this run.
-    static let batchMinimumDuration: TimeInterval = 0.30
+    /// requirement (4800 samples @ 16 kHz = 300 ms).
+    static let batchFloorSamples = 4_800
 
     static func isBelowBatchMinimum(_ audio: FabCore.AudioBuffer) -> Bool {
         audio.duration < batchMinimumDuration
+    }
+
+    /// Short utterances get trailing digital silence up to the decoder
+    /// floor instead of being dropped — the cliff becomes unreachable.
+    /// Covers every path through transcribe(): the hybrid (.batchFinal)
+    /// primary decode and the .streamPreferred batch fallback. The EOU
+    /// streaming session never calls transcribe() and is not padded.
+    static func paddedToBatchFloor(_ audio: FabCore.AudioBuffer) -> FabCore.AudioBuffer {
+        guard audio.samples.count < batchFloorSamples else { return audio }
+        var samples = audio.samples
+        samples.append(
+            contentsOf: [Float](repeating: 0, count: batchFloorSamples - samples.count))
+        return FabCore.AudioBuffer(samples: samples, sampleRate: audio.sampleRate)
     }
 
     public func load(model: ModelDescriptor) async throws {
@@ -145,6 +170,7 @@ public actor ParakeetBackend: StreamingTranscriptionBackend {
         guard !Self.isBelowBatchMinimum(audio) else {
             return Transcript(text: "", audioDuration: audio.duration)
         }
+        let decodable = Self.paddedToBatchFloor(audio)
         // No progress polling: v3 decodes at ~190× real time, so even a
         // minute of audio finishes inside one progress-UI repaint.
         // `language: nil` = auto-detect (there is no app language setting).
@@ -168,7 +194,7 @@ public actor ParakeetBackend: StreamingTranscriptionBackend {
         var decoderState = try TdtDecoderState()
         let fluidLanguage: Language? = language.flatMap { Language(rawValue: $0.rawValue) }
         let result = try await manager.transcribe(
-            audio.samples, decoderState: &decoderState, language: fluidLanguage)
+            decodable.samples, decoderState: &decoderState, language: fluidLanguage)
         return Transcript(
             text: result.text.trimmingCharacters(in: .whitespacesAndNewlines),
             audioDuration: audio.duration

@@ -43,30 +43,88 @@ public protocol StreamingTranscriptionBackend: TranscriptionBackend {
     func startStreamingSession() async throws -> any StreamingSession
 }
 
-/// The fallback invariant in one place: use the streaming result when the
-/// session survived and produced text, otherwise run the batch path — a
-/// transcript is never silently lost. If `finish()` succeeds but returns
-/// empty text, we still fall back (defense-in-depth): genuine silence costs
-/// one extra batch pass that also returns empty, while a swallowed utterance
-/// gets rescued. No `cancel()` is needed there — `finish()` already succeeded.
+/// Which output wins when a streaming session and the batch decoder are both
+/// available for one utterance.
+public enum FinalTranscriptPolicy: Sendable {
+    /// Streamed text wins when the session survived and produced text
+    /// (Apple Speech: its streamed final IS its best output).
+    case streamPreferred
+    /// Batch decode is the final text; the streamed result is only a rescue
+    /// when batch throws or returns empty (Parakeet hybrid: EOU 120M
+    /// partials for the overlay, TDT v3 accuracy for the inserted text).
+    case batchFinal
+}
+
+/// The fallback invariant in one place: whichever policy runs, a transcript
+/// is never silently lost — each side rescues the other.
 public enum StreamingDictation {
     public static func finalTranscript(
         session: (any StreamingSession)?,
+        policy: FinalTranscriptPolicy = .streamPreferred,
         fallback: @Sendable () async throws -> Transcript
     ) async throws -> (transcript: Transcript, streamed: Bool) {
-        if let session {
-            do {
-                let transcript = try await session.finish()
-                if !transcript.text.isEmpty {
-                    return (transcript, true)
+        switch policy {
+        case .streamPreferred:
+            if let session {
+                do {
+                    let transcript = try await session.finish()
+                    if !transcript.text.isEmpty {
+                        return (transcript, true)
+                    }
+                    // Empty streamed text: fall through to batch (no cancel —
+                    // finish succeeded). The caller still has the full buffer.
+                } catch {
+                    await session.cancel()
+                    // Fall through to batch; the caller still has the full buffer.
                 }
-                // Empty streamed text: fall through to batch (no cancel —
-                // finish succeeded). The caller still has the full buffer.
+            }
+            return (try await fallback(), false)
+
+        case .batchFinal:
+            do {
+                let transcript = try await fallback()
+                if !transcript.text.isEmpty || session == nil {
+                    // Batch won: never pay the EOU finalize wait for text we
+                    // discard — cancel, don't finish.
+                    if let session { await session.cancel() }
+                    return (transcript, false)
+                }
+                // Batch empty but a session exists: try the streamed rescue.
+                if let session, let rescued = await Self.rescue(session) {
+                    return (rescued, true)
+                }
+                return (transcript, false)
             } catch {
-                await session.cancel()
-                // Fall through to batch; the caller still has the full buffer.
+                // Batch died: the streamed text is the rescue.
+                if let session, let rescued = await Self.rescue(session) {
+                    return (rescued, true)
+                }
+                throw error
             }
         }
-        return (try await fallback(), false)
+    }
+
+    /// Finish the session and return its text if usable; ends the session
+    /// exactly once either way (cancel after a failed finish).
+    private static func rescue(_ session: any StreamingSession) async -> Transcript? {
+        do {
+            let transcript = try await session.finish()
+            return transcript.text.isEmpty ? nil : transcript
+        } catch {
+            await session.cancel()
+            return nil
+        }
+    }
+}
+
+extension FinalTranscriptPolicy {
+    /// Whisper never opens a session, so its value is inert — listed for
+    /// exhaustiveness. Exhaustive switch on purpose: a new engine kind must
+    /// make a deliberate policy choice here, not inherit one silently.
+    public static func `for`(engine: TranscriptionEngineKind) -> FinalTranscriptPolicy {
+        switch engine {
+        case .parakeet: .batchFinal
+        case .appleSpeech, .whisper: .streamPreferred
+        }
     }
 }
