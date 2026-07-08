@@ -48,8 +48,8 @@ extension LanguageModelRequesting {
     public func prepare(instructions: String) async {}
 }
 
-/// LLM cleanup stage. Invariant: may improve or no-op, never lose text —
-/// every failure path returns the raw transcript unchanged.
+/// LLM cleanup stage. Invariant: may improve or no-op, never lose or invent
+/// text — every failure path returns the raw transcript unchanged.
 public actor FoundationModelPostProcessor: ContextualTextPostProcessor {
     private let requester: any LanguageModelRequesting
     private let vocabulary: [String]
@@ -114,6 +114,13 @@ public actor FoundationModelPostProcessor: ContextualTextPostProcessor {
                     : CleanupReport(text: text, outcome: .fellBack)
             }
             let stripped = Self.strippingEdgeSpaces(cleaned)
+            guard CleanupOutputGate.permits(
+                raw: text, cleaned: stripped, vocabulary: vocabulary + screenTerms
+            ) else {
+                // Never log transcript text — term counts / outcomes only.
+                NSLog("fabulous: LLM cleanup output rejected (invented content), using raw transcript")
+                return CleanupReport(text: text, outcome: .rejected)
+            }
             return CleanupReport(
                 text: stripped,
                 outcome: stripped == text ? .unchanged : .changed
