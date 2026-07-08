@@ -97,5 +97,9 @@ let package = Package(
                 "ScreenReader", "PostProcessing",
             ]
         ),
+
+        // Coverage for what's reachable in FabulousApp without a structural
+        // seam: SettingsStore defaults and the Silero digest table.
+        .testTarget(name: "FabulousAppTests", dependencies: ["FabulousApp"]),
     ]
 )
