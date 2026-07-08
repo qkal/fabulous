@@ -87,6 +87,39 @@ struct ParakeetBackendTests {
         #expect(await partialCount.value > 0)
     }
 
+    /// Empirical validation of the zero-padding hypothesis (Task 3's
+    /// `paddedToBatchFloor`): does a real sub-0.30 s spoken blip, padded
+    /// with trailing digital silence to the 4800-sample cliff, decode to
+    /// real text or garbage? Synthesizes "yes" and slices to the voiced
+    /// prefix so the buffer sits below the cliff — `transcribe()` then
+    /// pads it internally before handing it to FluidAudio.
+    ///
+    /// DOCUMENTED NEGATIVE RESULT (empirical, 2026-07-08, 3/3 stable runs):
+    /// a padded sub-cliff blip decodes to an *empty* string, not garbage
+    /// and not the spoken word — FluidAudio's decoder needs real acoustic
+    /// content near the cliff, not just enough samples. This is why
+    /// `ParakeetBackend.batchMinimumDuration` stays at the measured 0.30 s
+    /// cliff rather than dropping to a noise floor: padding makes the
+    /// *decoder* reachable but doesn't make it *accurate* for blips this
+    /// short. Sub-threshold utterances remain Whisper's advantage; the
+    /// safety net (`AppController.safetyNet`) catches the empty-result case
+    /// visibly rather than silently losing the dictation.
+    @Test(.enabled(if: realASREnabled))
+    func paddedBlipDoesNotDecodeToText() async throws {
+        var audio = try Self.synthesize(text: "yes")
+        if audio.samples.count >= 4_800 {
+            audio = FabCore.AudioBuffer(
+                samples: Array(audio.samples.prefix(4_500)), sampleRate: 16_000)
+        }
+        try #require(audio.samples.count < 4_800, "blip must sit below the cliff to test padding")
+        let backend = ParakeetBackend()
+        try await backend.load(model: .parakeetV3)
+        let transcript = try await backend.transcribe(audio, language: nil)
+        // Negative result: empty, not the word "yes" — see the doc comment
+        // above for the full verdict and its consequence for the guard.
+        #expect(transcript.text.isEmpty)
+    }
+
     /// Synthesizes speech with `say` and decodes it into a mono Float32
     /// buffer, same approach as `SpeechAnalyzerBackendTests.monoFloatBuffer`
     /// (that helper is `private` to its own suite, so it isn't reusable
