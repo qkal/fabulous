@@ -100,12 +100,13 @@ protocol TranscriptionBackend: Sendable {
 }
 ```
 
-Backends: **WhisperKit** (shipped; `large-v3-turbo` recommended default,
-`small`/`base` for smaller footprints), **Apple SpeechAnalyzer** (shipped
-phase 4, experimental, macOS 26+ behind `#available` and a Settings →
-General engine toggle; WhisperKit stays the default), **Parakeet via FluidAudio**
-(shipped experimental, TDT 0.6b v3 batch + EOU 120M streaming, third engine
-picker option, dogfood-pending).
+Backends: **Parakeet via FluidAudio** (shipped; TDT 0.6b v3 batch + EOU
+120M streaming hybrid; the default engine since v0.2 after dogfooding),
+**WhisperKit** (shipped; `large-v3-turbo` recommended model,
+`small`/`base` for smaller footprints; the fallback engine when a
+Parakeet load fails), **Apple SpeechAnalyzer** (shipped phase 4,
+experimental, macOS 26+ behind `#available` and a Settings → General
+engine toggle).
 
 `SpeechAnalyzerBackend` differs from WhisperKit in ownership: model assets
 belong to the OS (`AssetInventory` reserve + install on `load`; nothing

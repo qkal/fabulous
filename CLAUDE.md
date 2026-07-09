@@ -214,8 +214,10 @@ settings tab, AppOverride user entries layered over built-in terminal
 defaults (user wins, delete reverts), injector selector swapped live;
 Parakeet/FluidAudio backend: TDT 0.6b v3
 batch + EOU 120M streaming, third engine picker option, gated Models-tab
-management, shipped 2026-07-04, dogfood decision pending (stay-120M / hybrid
-/ batch-only);
+management, shipped 2026-07-04; hybrid (v3 finals + 120M partials) shipped
+2026-07-08 and made the DEFAULT engine 2026-07-09 per Kal's dogfood verdict
+(fresh installs default to Parakeet, stored choices kept, Whisper stays the
+load-failure fallback; public ROADMAP.md tracks the rest of v0.2);
 screen context: AX-harvested on-screen
 vocabulary at record start → SpeechAnalyzer contextual strings + LLM
 cleanup vocab; ScreenReader module; default-on toggle in General;

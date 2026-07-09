@@ -13,11 +13,11 @@ No cloud, no telemetry, no accounts.
 - **Hold-to-talk (or tap-to-toggle) dictation** anywhere, via a configurable
   global hotkey (modifier-hold like Right ⌥, or a key chord like ⌥Space).
 - **Three on-device ASR engines**, switchable in Settings → General:
-  - **Whisper** (default) via [WhisperKit](https://github.com/argmaxinc/WhisperKit)
+  - **Parakeet** (default; TDT 0.6b v3 + streaming EOU) via
+    [FluidAudio](https://github.com/FluidInference/FluidAudio).
+  - **Whisper** via [WhisperKit](https://github.com/argmaxinc/WhisperKit)
     on CoreML/ANE.
   - **Apple SpeechAnalyzer** (macOS 26+) — OS-managed, low latency.
-  - **Parakeet** (TDT 0.6b v3 + streaming EOU) via
-    [FluidAudio](https://github.com/FluidInference/FluidAudio).
 - **Streaming partials** — see words appear in the overlay as you speak.
 - **On-device LLM cleanup** (macOS 26+, Apple Foundation Models): removes
   fillers, fixes punctuation, and interprets spoken commands ("new line",
