@@ -51,8 +51,8 @@ final class SettingsStore {
         didSet { defaults.set(selectedModelID, forKey: Keys.selectedModelID) }
     }
 
-    /// Which ASR engine transcribes. Whisper is the default; Apple Speech
-    /// (macOS 26+) is the phase-4 experiment.
+    /// Which ASR engine transcribes. Parakeet (hybrid streaming) is the
+    /// default since v0.2; existing installs keep their stored choice.
     var transcriptionEngine: TranscriptionEngineKind {
         didSet {
             guard transcriptionEngine != oldValue else { return }
@@ -158,7 +158,7 @@ final class SettingsStore {
             ?? ModelCatalog.recommended.id
         transcriptionEngine = defaults.string(forKey: Keys.transcriptionEngine)
             .flatMap(TranscriptionEngineKind.init(rawValue:))
-            ?? .whisper
+            ?? .parakeet
         inputDeviceUID = defaults.string(forKey: Keys.inputDeviceUID)
         historyEnabled = defaults.object(forKey: Keys.historyEnabled) as? Bool ?? true
         soundCuesEnabled = defaults.object(forKey: Keys.soundCuesEnabled) as? Bool ?? true

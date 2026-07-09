@@ -1,3 +1,4 @@
+import FabCore
 import Foundation
 import Testing
 
@@ -15,8 +16,15 @@ struct SettingsStoreTests {
         #expect(s.historyEnabled == true)
     }
 
-    @Test func transcriptionEngineDefaultsToWhisper() {
+    @Test func transcriptionEngineDefaultsToParakeet() {
         let s = SettingsStore(defaults: ephemeral())
+        #expect(s.transcriptionEngine == .parakeet)
+    }
+
+    @Test func storedEngineChoiceSurvivesDefaultFlip() {
+        let defaults = ephemeral()
+        defaults.set(TranscriptionEngineKind.whisper.rawValue, forKey: "transcriptionEngine")
+        let s = SettingsStore(defaults: defaults)
         #expect(s.transcriptionEngine == .whisper)
     }
 
