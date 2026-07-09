@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-Please report security issues privately by email to **czapkovicz@gmail.com**
+Please report security issues privately by email to **kal@lovablia.com**
 with the subject line `fabulous security`. Do not open a public issue for
 undisclosed vulnerabilities.
 

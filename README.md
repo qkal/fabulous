@@ -114,6 +114,10 @@ For a stable local signature that keeps permission grants across rebuilds, run
 `scripts/make-dev-cert.sh` once; `build.sh` picks it up automatically. See
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## Roadmap
+
+See [ROADMAP.md](ROADMAP.md) for what's next (updated at each release).
+
 ## License
 
 [GPL-3.0-or-later](LICENSE).
