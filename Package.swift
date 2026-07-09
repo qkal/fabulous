@@ -100,6 +100,6 @@ let package = Package(
 
         // Coverage for what's reachable in FabulousApp without a structural
         // seam: SettingsStore defaults and the Silero digest table.
-        .testTarget(name: "FabulousAppTests", dependencies: ["FabulousApp"]),
+        .testTarget(name: "FabulousAppTests", dependencies: ["FabulousApp", "FabCore"]),
     ]
 )
