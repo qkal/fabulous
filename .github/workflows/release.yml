@@ -10,7 +10,7 @@ permissions:
 jobs:
   release:
     # Pinned for the macOS 26 SDK — see ci.yml.
-    runs-on: macos-26
+    runs-on: blacksmith-6vcpu-macos-26
     steps:
       - uses: actions/checkout@v4
 
